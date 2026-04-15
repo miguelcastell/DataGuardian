@@ -9,7 +9,7 @@ from src.data.quality import MISSING_TOKENS
 
 
 def _normalize_column_names(columns: pd.Index) -> list[str]:
-    return (
+    normalized = (
         pd.Series(columns.astype(str))
         .str.strip()
         .str.lower()
@@ -17,6 +17,17 @@ def _normalize_column_names(columns: pd.Index) -> list[str]:
         .str.replace(r"(^_+|_+$)", "", regex=True)
         .tolist()
     )
+    # Deduplicar: se dois nomes colidirem, acrescentar sufixo _1, _2, ...
+    seen: dict[str, int] = {}
+    result: list[str] = []
+    for name in normalized:
+        if name in seen:
+            seen[name] += 1
+            result.append(f"{name}_{seen[name]}")
+        else:
+            seen[name] = 0
+            result.append(name)
+    return result
 
 
 def clean_dataset(
@@ -79,9 +90,14 @@ def clean_dataset(
     dropped_cols: list[str] = []
     if drop_high_missing_columns_pct < 100.0:
         miss_pct = cleaned.isna().mean() * 100.0
-        dropped_cols = miss_pct[miss_pct > float(drop_high_missing_columns_pct)].index.tolist()
-        if dropped_cols:
+        candidates = miss_pct[miss_pct > float(drop_high_missing_columns_pct)].index.tolist()
+        # Nao remover todas as colunas — manter pelo menos uma
+        if candidates and len(candidates) < len(cleaned.columns):
+            dropped_cols = candidates
             cleaned = cleaned.drop(columns=dropped_cols)
+        elif candidates:
+            # Todas as colunas seriam removidas — ignorar a operacao
+            dropped_cols = []
     report["dropped_high_missing_columns"] = dropped_cols
 
     if fill_numeric in {"median", "mean", "zero"}:
