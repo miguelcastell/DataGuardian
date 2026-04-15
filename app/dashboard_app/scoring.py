@@ -2,8 +2,22 @@ from __future__ import annotations
 
 import pandas as pd
 
+# Pesos de penalidade por ponto percentual de cada dimensao de qualidade.
+# Cap maximo por dimensao para evitar que um unico problema collapse o score inteiro.
+_MISSING_WEIGHT = 1.5       # por % de celulas faltantes (cap: 30 pts)
+_DUP_WEIGHT = 2.0           # por % de linhas duplicadas (cap: 20 pts)
+_CONSTANT_WEIGHT = 0.8      # por % de colunas constantes (cap: 10 pts)
+_PLACEHOLDER_WEIGHT = 0.8   # por % de celulas com tokens de nulo (cap: 10 pts)
+_TYPE_WEIGHT = 1.0          # por % de colunas com sugestao de tipo (cap: 15 pts)
+_OUTLIER_WEIGHT = 0.5       # por % media de outliers nas colunas numericas (cap: 10 pts)
 
-def compute_quality_score(analysis: dict) -> tuple[float, str]:
+# Limiares de nivel de qualidade
+_LEVEL_EXCELLENT = 90
+_LEVEL_GOOD = 75
+_LEVEL_ATTENTION = 55
+
+
+def compute_quality_score(analysis: dict) -> tuple[float, str, dict[str, float]]:
     rows = max(int(analysis["summary"]["rows"]), 1)
     cols = max(int(analysis["summary"]["columns"]), 1)
     total_cells = max(rows * cols, 1)
@@ -25,38 +39,35 @@ def compute_quality_score(analysis: dict) -> tuple[float, str]:
     if not analysis["outlier_table"].empty:
         outlier_pct = float(analysis["outlier_table"]["outlier_pct_iqr"].mean())
 
-    penalty = (
-        (missing_pct * 1.20)
-        + (dup_pct * 1.00)
-        + (constant_pct * 0.80)
-        + (placeholder_pct * 0.80)
-        + (type_issue_pct * 0.90)
-        + (outlier_pct * 0.50)
-    )
+    breakdown: dict[str, float] = {}
+    penalty = 0.0
 
-    if analysis["summary"]["missing_cells"] > 0:
-        penalty += 4.0
-    if analysis["summary"]["duplicate_rows"] > 0:
-        penalty += 4.0
-    if len(analysis["constant_columns"]) > 0:
-        penalty += 3.0
-    if not analysis["type_suggestions"].empty:
-        penalty += 6.0
-    if not analysis["outlier_table"].empty:
-        penalty += 3.0
+    def _deduct(label: str, pct: float, weight: float, cap: float) -> None:
+        nonlocal penalty
+        d = min(pct * weight, cap)
+        if d > 0:
+            penalty += d
+            breakdown[label] = -round(d, 1)
 
-    score = max(0.0, min(100.0, 100.0 - penalty))
+    _deduct("Valores ausentes", missing_pct, _MISSING_WEIGHT, 30.0)
+    _deduct("Linhas duplicadas", dup_pct, _DUP_WEIGHT, 20.0)
+    _deduct("Colunas constantes", constant_pct, _CONSTANT_WEIGHT, 10.0)
+    _deduct("Tokens de nulo", placeholder_pct, _PLACEHOLDER_WEIGHT, 10.0)
+    _deduct("Inconsistencias de tipo", type_issue_pct, _TYPE_WEIGHT, 15.0)
+    _deduct("Outliers", outlier_pct, _OUTLIER_WEIGHT, 10.0)
 
-    if score >= 90:
+    score = round(max(0.0, min(100.0, 100.0 - penalty)), 1)
+
+    if score >= _LEVEL_EXCELLENT:
         level = "Excelente"
-    elif score >= 75:
+    elif score >= _LEVEL_GOOD:
         level = "Bom"
-    elif score >= 55:
+    elif score >= _LEVEL_ATTENTION:
         level = "Atencao"
     else:
         level = "Critico"
 
-    return round(score, 1), level
+    return score, level, breakdown
 
 
 def build_prioritized_issues(analysis: dict) -> pd.DataFrame:

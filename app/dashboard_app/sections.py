@@ -4,29 +4,179 @@ import io
 import json
 from datetime import UTC, datetime
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.dashboard_app.styles import badge, metric_card
+from app.dashboard_app.styles import QUALITY_PALETTE, badge, metric_card
 from src.data.cleaning import clean_dataset
 
 
-def render_overview(df: pd.DataFrame, analysis: dict, quality_score: float, quality_level: str) -> None:
-    top = st.columns(6)
-    with top[0]:
-        metric_card("Score de qualidade", f"{quality_score}/100")
-    with top[1]:
-        metric_card("Nivel", quality_level)
-    with top[2]:
-        metric_card("Linhas", f"{analysis['summary']['rows']:,}")
-    with top[3]:
-        metric_card("Colunas", f"{analysis['summary']['columns']:,}")
-    with top[4]:
-        metric_card("Celulas faltantes", f"{analysis['summary']['missing_cells']:,}")
-    with top[5]:
-        metric_card("Duplicadas", f"{analysis['summary']['duplicate_rows']:,}")
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _score_gauge(score: float, level: str) -> go.Figure:
+    palette = QUALITY_PALETTE.get(level, QUALITY_PALETTE["Bom"])
+    fig = go.Figure(
+        go.Indicator(
+            mode="gauge+number",
+            value=score,
+            number={"suffix": "/100", "font": {"size": 28, "color": palette["color"]}},
+            gauge={
+                "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#94a3b8"},
+                "bar": {"color": palette["accent"], "thickness": 0.25},
+                "bgcolor": "white",
+                "borderwidth": 0,
+                "steps": [
+                    {"range": [0,  55], "color": "#fff1f2"},
+                    {"range": [55, 75], "color": "#fffbeb"},
+                    {"range": [75, 90], "color": "#f0fdf9"},
+                    {"range": [90, 100], "color": "#ecfdf3"},
+                ],
+                "threshold": {
+                    "line": {"color": palette["accent"], "width": 3},
+                    "thickness": 0.85,
+                    "value": score,
+                },
+            },
+        )
+    )
+    fig.update_layout(
+        height=200,
+        margin=dict(l=20, r=20, t=30, b=10),
+        paper_bgcolor="white",
+        font={"family": "Manrope, sans-serif"},
+    )
+    return fig
+
+
+def _null_heatmap(df: pd.DataFrame, max_cols: int = 30) -> go.Figure | None:
+    """Heatmap de presenca/ausencia de nulos por coluna."""
+    cols = df.columns.tolist()[:max_cols]
+    subset = df[cols]
+    if subset.empty:
+        return None
+    # Amostra de ate 200 linhas para nao sobrecarregar o grafico
+    sample = subset.head(200)
+    z = sample.isna().astype(int).values
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=cols,
+            y=[f"L{i+1}" for i in range(len(sample))],
+            colorscale=[[0, "#ecfdf3"], [1, "#ef4444"]],
+            showscale=True,
+            colorbar=dict(
+                tickvals=[0, 1],
+                ticktext=["Presente", "Ausente"],
+                thickness=14,
+                len=0.6,
+            ),
+            hovertemplate="Coluna: %{x}<br>Linha: %{y}<br>%{text}<extra></extra>",
+            text=[["Presente" if v == 0 else "Ausente" for v in row] for row in z],
+        )
+    )
+    fig.update_layout(
+        title="Mapa de ausencia de dados (vermelho = nulo)",
+        template="plotly_white",
+        height=max(220, min(500, len(sample) * 4)),
+        margin=dict(l=10, r=10, t=50, b=10),
+        xaxis=dict(tickangle=-45),
+    )
+    return fig
+
+
+def _diff_dataframe(before: pd.DataFrame, after: pd.DataFrame) -> pd.DataFrame:
+    """
+    Retorna DataFrame de texto com células marcadas com asterisco (*) onde houve mudança.
+    Alinha por índice e colunas comuns.
+    """
+    common_cols = [c for c in before.columns if c in after.columns]
+    b = before[common_cols].reset_index(drop=True)
+    a = after[common_cols].reset_index(drop=True)
+    n_rows = min(len(b), len(a), 30)
+    b = b.head(n_rows)
+    a = a.head(n_rows)
+    result = a.copy().astype(str)
+    for col in common_cols:
+        changed = b[col].astype(str) != a[col].astype(str)
+        result.loc[changed, col] = result.loc[changed, col] + " ✱"
+    return result
+
+
+# ── render functions ──────────────────────────────────────────────────────────
+
+def render_overview(
+    df: pd.DataFrame,
+    analysis: dict,
+    quality_score: float,
+    quality_level: str,
+    score_breakdown: dict[str, float] | None = None,
+) -> None:
+    palette = QUALITY_PALETTE.get(quality_level, QUALITY_PALETTE["Bom"])
+    rows = analysis["summary"]["rows"]
+    missing_pct = float(analysis["summary"]["missing_cells_pct"])
+    dup_pct = float(analysis["summary"]["duplicate_rows_pct"])
+
+    # Gauge + cards lado a lado
+    gauge_col, cards_col = st.columns([1, 2])
+    with gauge_col:
+        st.plotly_chart(_score_gauge(quality_score, quality_level), width="stretch")
+
+    with cards_col:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            metric_card(
+                "Celulas faltantes",
+                f"{analysis['summary']['missing_cells']:,}",
+                bar_pct=missing_pct,
+                bar_color="#ef4444" if missing_pct > 20 else "#f59e0b" if missing_pct > 5 else "#12b76a",
+                sub=f"{missing_pct:.1f}% do total",
+            )
+        with c2:
+            metric_card(
+                "Linhas duplicadas",
+                f"{analysis['summary']['duplicate_rows']:,}",
+                bar_pct=dup_pct,
+                bar_color="#ef4444" if dup_pct > 5 else "#f59e0b" if dup_pct > 1 else "#12b76a",
+                sub=f"{dup_pct:.1f}% das linhas",
+            )
+        with c3:
+            mem = analysis["summary"]["memory_mb"]
+            metric_card(
+                "Memoria",
+                f"{mem:.2f} MB",
+                sub=f"{rows:,} linhas · {analysis['summary']['columns']} cols",
+            )
+
+        # Padroes detectados como badges
+        if "pattern_table" in analysis and not analysis["pattern_table"].empty:
+            pt = analysis["pattern_table"]
+            badge_html = ""
+            for _, r in pt.iterrows():
+                badge_html += badge(f"{r['column']} → {r['pattern']} ({r['match_pct']:.0f}%)", "good")
+            st.markdown(
+                f"<div style='margin-top:12px;'><span style='font-size:.75rem;font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.04em;color:#475467;'>Padroes detectados</span>"
+                f"<br><div style='margin-top:6px;'>{badge_html}</div></div>",
+                unsafe_allow_html=True,
+            )
+
+    if score_breakdown:
+        with st.expander("Detalhamento do score de qualidade"):
+            lines = []
+            for dimensao, deducao in score_breakdown.items():
+                lines.append(f"- **{dimensao}**: :red[{deducao:+.1f} pts]")
+            st.markdown("\n".join(lines))
+
+    # Heatmap de nulos
+    has_missing = analysis["summary"]["missing_cells"] > 0
+    if has_missing:
+        with st.expander("Mapa de ausencia de dados"):
+            fig_hm = _null_heatmap(df)
+            if fig_hm:
+                st.plotly_chart(fig_hm, width="stretch")
 
     st.markdown("### Previa do dataset")
     st.dataframe(df.head(60), width="stretch")
@@ -61,6 +211,10 @@ def render_quality_issues(analysis: dict, issues_df: pd.DataFrame) -> None:
         else:
             st.dataframe(analysis["placeholder_table"], width="stretch")
 
+        if "pattern_table" in analysis and not analysis["pattern_table"].empty:
+            st.markdown("#### Padroes semanticos detectados")
+            st.dataframe(analysis["pattern_table"], width="stretch")
+
     with right:
         st.markdown("#### Sugestoes de tipo")
         if analysis["type_suggestions"].empty:
@@ -68,12 +222,11 @@ def render_quality_issues(analysis: dict, issues_df: pd.DataFrame) -> None:
         else:
             st.dataframe(analysis["type_suggestions"], width="stretch")
 
-        st.markdown("#### Outliers (IQR)")
+        st.markdown("#### Outliers (IQR + Z-score)")
         if analysis["outlier_table"].empty:
             st.info("Sem outliers relevantes pelo criterio IQR.")
         else:
             st.dataframe(analysis["outlier_table"], width="stretch")
-
 
 def render_alerts(analysis: dict, quality_score: float) -> None:
     st.markdown("### Alertas")
@@ -94,6 +247,13 @@ def render_alerts(analysis: dict, quality_score: float) -> None:
         st.warning(f"Taxa de duplicidade acima do limite: {dup_pct:.2f}% das linhas.")
     if len(analysis["constant_columns"]) > 0:
         st.info("Colunas constantes detectadas: " + ", ".join(analysis["constant_columns"][:6]))
+    if "pattern_table" in analysis and not analysis["pattern_table"].empty:
+        pt = analysis["pattern_table"]
+        for _, r in pt.iterrows():
+            st.info(
+                f"Coluna **{r['column']}** parece conter dados do tipo **{r['pattern']}** "
+                f"({r['match_pct']:.0f}% de conformidade). Considere validacao de formato."
+            )
 
 
 def render_visual_insights(df: pd.DataFrame) -> None:
@@ -157,23 +317,28 @@ def render_visual_insights(df: pd.DataFrame) -> None:
         fig_scatter.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
         st.plotly_chart(fig_scatter, width="stretch")
 
-        corr = df[numeric_cols].corr(numeric_only=True)
-        heatmap = go.Figure(
-            data=go.Heatmap(
-                z=corr.values,
-                x=corr.columns,
-                y=corr.index,
-                zmid=0,
-                colorscale="RdBu",
+        corr_data = df[numeric_cols].corr(numeric_only=True)
+        if not corr_data.empty and corr_data.shape[0] >= 2:
+            heatmap = go.Figure(
+                data=go.Heatmap(
+                    z=corr_data.values,
+                    x=corr_data.columns,
+                    y=corr_data.index,
+                    zmid=0,
+                    colorscale="RdBu",
+                )
             )
-        )
-        heatmap.update_layout(title="Matriz de correlacao", template="plotly_white")
-        st.plotly_chart(heatmap, width="stretch")
+            heatmap.update_layout(title="Matriz de correlacao", template="plotly_white")
+            st.plotly_chart(heatmap, width="stretch")
+        else:
+            st.info("Sao necessarias pelo menos 2 colunas numericas com dados validos para a matriz de correlacao.")
 
         box_col = st.selectbox("Checagem de outlier (boxplot)", options=numeric_cols)
         fig_box = px.box(df, y=box_col, points="outliers", title=f"Perfil de outlier: {box_col}")
         fig_box.update_layout(template="plotly_white")
         st.plotly_chart(fig_box, width="stretch")
+    elif numeric_cols:
+        st.info("Sao necessarias pelo menos 2 colunas numericas para o grafico de dispersao e matriz de correlacao.")
 
 
 def render_cleaning_section(
@@ -184,6 +349,28 @@ def render_cleaning_section(
     quality_level: str,
 ) -> None:
     st.markdown("### Configuracao de tratamento")
+
+    has_missing = analysis["summary"]["missing_cells"] > 0
+    has_dups = analysis["summary"]["duplicate_rows"] > 0
+    has_placeholders = not analysis["placeholder_table"].empty
+    has_type_issues = not analysis["type_suggestions"].empty
+
+    if has_missing or has_dups or has_placeholders or has_type_issues:
+        if st.button("Aplicar todas as recomendacoes", type="primary"):
+            rec_options: dict = {
+                "trim_strings": True,
+                "replace_missing_tokens": has_placeholders,
+                "normalize_column_names": True,
+                "drop_duplicates": has_dups,
+                "drop_high_missing_columns_pct": 70.0 if has_missing else 100.0,
+                "fill_numeric": "median" if has_missing else "none",
+                "fill_categorical": "mode" if has_missing else "none",
+            }
+            rec_df, _ = clean_dataset(df_original, **rec_options)
+            st.session_state["cleaned_df"] = rec_df
+            st.session_state["show_bi"] = True
+            st.success("Recomendacoes aplicadas. Veja o resultado em Insights BI.")
+        st.markdown("---")
 
     c1, c2, c3 = st.columns(3)
     trim_strings = c1.toggle(
@@ -261,12 +448,28 @@ def render_cleaning_section(
     s3.metric("Colunas antes", f"{report_preview['columns_before']:,}")
     s4.metric("Colunas depois", f"{report_preview['columns_after']:,}")
 
-    st.dataframe(cleaned_preview.head(50), width="stretch")
+    # Diff colorido: celulas alteradas marcadas com ✱
+    with st.expander("Comparacao antes / depois (✱ = valor alterado)", expanded=True):
+        diff_df = _diff_dataframe(df_original, cleaned_preview)
+        st.dataframe(diff_df, width="stretch")
 
+    # Botoes de download
     csv_buffer = io.StringIO()
     cleaned_preview.to_csv(csv_buffer, index=False)
 
-    b1, b2 = st.columns(2)
+    excel_buffer = io.BytesIO()
+    try:
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            cleaned_preview.to_excel(writer, sheet_name="Dados tratados", index=False)
+            if not analysis["missing_table"].empty:
+                analysis["missing_table"].to_excel(writer, sheet_name="Faltantes", index=False)
+            if not analysis["outlier_table"].empty:
+                analysis["outlier_table"].to_excel(writer, sheet_name="Outliers", index=False)
+        excel_available = True
+    except Exception:
+        excel_available = False
+
+    b1, b2, b3 = st.columns(3)
     with b1:
         st.download_button(
             label="Baixar CSV tratado",
@@ -278,6 +481,19 @@ def render_cleaning_section(
         )
 
     with b2:
+        if excel_available:
+            st.download_button(
+                label="Baixar Excel (.xlsx)",
+                data=excel_buffer.getvalue(),
+                file_name=f"cleaned_{selected_file.replace('.csv', '')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+                help="Exporta dados tratados + abas de qualidade em Excel.",
+            )
+        else:
+            st.info("Instale openpyxl para habilitar export Excel: `pip install openpyxl`")
+
+    with b3:
         open_bi = st.button(
             "Abrir insights BI",
             width="stretch",
