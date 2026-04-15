@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Build / logs
+build/
+dist/
+*.log
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local generated data and artifacts
+artifacts/
+data.csv
+dataset_horrivel.csv
+*.joblib
+
+# Optional local exports
+exports/
+reports/
