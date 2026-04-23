@@ -228,6 +228,19 @@ def render_quality_issues(analysis: dict, issues_df: pd.DataFrame) -> None:
         else:
             st.dataframe(analysis["outlier_table"], width="stretch")
 
+        st.markdown("#### Cardinalidade suspeita")
+        if not analysis.get("cardinality_table", pd.DataFrame()).empty:
+            st.dataframe(analysis["cardinality_table"], width="stretch")
+        else:
+            st.info("Nenhuma coluna com cardinalidade suspeita.")
+
+        st.markdown("#### Quase-duplicatas textuais")
+        if not analysis.get("fuzzy_table", pd.DataFrame()).empty:
+            st.dataframe(analysis["fuzzy_table"], width="stretch")
+        else:
+            st.info("Nenhuma quase-duplicata textual detectada."
+                    " (Instale rapidfuzz para habilitar: `pip install rapidfuzz`)")
+
 def render_alerts(analysis: dict, quality_score: float) -> None:
     st.markdown("### Alertas")
 
@@ -365,6 +378,8 @@ def render_cleaning_section(
                 "drop_high_missing_columns_pct": 70.0 if has_missing else 100.0,
                 "fill_numeric": "median" if has_missing else "none",
                 "fill_categorical": "mode" if has_missing else "none",
+                "outlier_treatment": "cap" if not analysis["outlier_table"].empty else "none",
+                "outlier_method": "iqr",
             }
             rec_df, _ = clean_dataset(df_original, **rec_options)
             st.session_state["cleaned_df"] = rec_df
@@ -430,6 +445,30 @@ def render_cleaning_section(
         help="Colunas com taxa de faltantes acima desse valor serao removidas.",
     )
 
+    st.markdown("#### Tratamento de outliers")
+    oc1, oc2 = st.columns(2)
+    outlier_treatment_label = oc1.selectbox(
+        "Acao para outliers",
+        ["Nenhuma", "Capping (limitar pelos percentis)", "Remover linhas"],
+        index=0,
+        help="Capping aplica winsorization pelos limites IQR ou Z-score. Remover exclui as linhas.",
+    )
+    outlier_method_label = oc2.selectbox(
+        "Metodo de deteccao",
+        ["IQR (1.5×IQR)", "Z-score (|z| > 3)"],
+        index=0,
+        help="Criterio para identificar outliers.",
+    )
+    outlier_treatment_map = {
+        "Nenhuma": "none",
+        "Capping (limitar pelos percentis)": "cap",
+        "Remover linhas": "remove",
+    }
+    outlier_method_map = {
+        "IQR (1.5×IQR)": "iqr",
+        "Z-score (|z| > 3)": "zscore",
+    }
+
     with st.spinner("Preparando previa do dataset tratado..."):
         cleaned_preview, report_preview = clean_dataset(
             df_original,
@@ -440,6 +479,8 @@ def render_cleaning_section(
             drop_high_missing_columns_pct=float(missing_threshold),
             fill_numeric=numeric_fill_map[numeric_fill_label],
             fill_categorical=cat_fill_map[cat_fill_label],
+            outlier_treatment=outlier_treatment_map[outlier_treatment_label],
+            outlier_method=outlier_method_map[outlier_method_label],
         )
 
     s1, s2, s3, s4 = st.columns(4)

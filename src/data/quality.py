@@ -95,6 +95,8 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
             "outlier_table": pd.DataFrame(),
             "pattern_table": pd.DataFrame(),
             "constant_columns": [],
+            "cardinality_table": pd.DataFrame(),
+            "fuzzy_table": pd.DataFrame(),
         }
 
     rows, cols = df.shape
@@ -212,6 +214,68 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
     # Padroes semanticos
     pattern_table = _detect_patterns(df, rows)
 
+    # Cardinalidade: colunas com alta unicidade (possivel ID) ou baixa (possivel constante disfarçada)
+    cardinality_rows: list[dict[str, Any]] = []
+    for col in df.columns:
+        n_unique = int(df[col].nunique(dropna=True))
+        n_non_null = int(df[col].notna().sum())
+        if n_non_null == 0:
+            continue
+        uniq_pct = round((n_unique / n_non_null) * 100.0, 1)
+        is_object = pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])
+        # Alta cardinalidade: >90% únicos em coluna texto → possível ID/chave
+        if is_object and uniq_pct > 90.0 and n_non_null > 10:
+            cardinality_rows.append({
+                "column": col,
+                "unique_values": n_unique,
+                "unique_pct": uniq_pct,
+                "flag": "Alta cardinalidade (possivel ID/chave)",
+            })
+        # Baixa cardinalidade em coluna numérica: <= 5 únicos → possível categórica disfarçada
+        elif not is_object and n_unique <= 5 and n_non_null > 10:
+            cardinality_rows.append({
+                "column": col,
+                "unique_values": n_unique,
+                "unique_pct": uniq_pct,
+                "flag": "Baixa cardinalidade (possivel categorica numerica)",
+            })
+    cardinality_table = pd.DataFrame(cardinality_rows)
+
+    # Quase-duplicatas: compara pares de colunas texto com razao de similaridade >= 80%
+    fuzzy_rows: list[dict[str, Any]] = []
+    str_cols = df.select_dtypes(include=["object", "string"]).columns.tolist()
+    if str_cols:
+        try:
+            from rapidfuzz import fuzz  # type: ignore
+            _has_rapidfuzz = True
+        except ImportError:
+            _has_rapidfuzz = False
+
+        if _has_rapidfuzz:
+            for col in str_cols:
+                sample = df[col].dropna().astype(str).str.strip()
+                if len(sample) < 2 or sample.nunique() < 2:
+                    continue
+                # Compara valores únicos entre si (máximo 200 para performance)
+                unique_vals = sample.unique()[:200].tolist()
+                near_dup_pairs: list[tuple[str, str, int]] = []
+                for i in range(len(unique_vals)):
+                    for j in range(i + 1, len(unique_vals)):
+                        score = fuzz.ratio(unique_vals[i], unique_vals[j])
+                        if 80 <= score < 100:
+                            near_dup_pairs.append((unique_vals[i], unique_vals[j], score))
+                if near_dup_pairs:
+                    # Reportar os 3 pares mais similares
+                    near_dup_pairs.sort(key=lambda x: -x[2])
+                    for v1, v2, sc in near_dup_pairs[:3]:
+                        fuzzy_rows.append({
+                            "column": col,
+                            "valor_1": v1,
+                            "valor_2": v2,
+                            "similaridade_pct": sc,
+                        })
+    fuzzy_table = pd.DataFrame(fuzzy_rows)
+
     summary = {
         "rows": rows,
         "columns": cols,
@@ -232,4 +296,6 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
         "outlier_table": outlier_table,
         "pattern_table": pattern_table,
         "constant_columns": constant_columns,
+        "cardinality_table": cardinality_table,
+        "fuzzy_table": fuzzy_table,
     }

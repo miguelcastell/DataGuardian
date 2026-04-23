@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app.dashboard_app.data_io import read_uploaded_csv
-from app.dashboard_app.scoring import build_prioritized_issues, compute_quality_score
+from app.dashboard_app.scoring import DOMAIN_PRESETS, build_prioritized_issues, compute_quality_score
 from app.dashboard_app.sections import (
     render_alerts,
     render_cleaning_section,
@@ -72,6 +72,14 @@ def run_dashboard() -> None:
 
     with st.sidebar:
         selected_file = st.selectbox("Dataset ativo", options=list(datasets.keys()))
+        st.markdown("---")
+        st.markdown("### Configuracao de score")
+        domain_preset = st.selectbox(
+            "Preset de dominio",
+            options=list(DOMAIN_PRESETS.keys()),
+            help="Ajusta os pesos do score de qualidade para o contexto dos seus dados.",
+        )
+        selected_weights = DOMAIN_PRESETS[domain_preset]
 
     df_original = datasets[selected_file]
 
@@ -83,7 +91,7 @@ def run_dashboard() -> None:
         st.error(analysis["error"])
         return
 
-    quality_score, quality_level, score_breakdown = compute_quality_score(analysis)
+    quality_score, quality_level, score_breakdown = compute_quality_score(analysis, custom_weights=selected_weights)
     issues_df = build_prioritized_issues(analysis)
 
     # Hero com status do dataset ativo

@@ -1,0 +1,26 @@
+id_cliente,nome,email,cpf,cep,telefone,idade,salario,cidade,status_pagamento,data_cadastro,score_credito
+1,Ana Paula Silva,ana.paula@email.com,123.456.789-09,01310-100,11 99999-0001,34,4500.00,São Paulo,ativo,2023-01-15,750
+2,Carlos Souza,carlos.souza@email.com,987.654.321-00,20040-020,21 98888-0002,28,3200.50,Rio de Janeiro,ativo,2023-02-20,680
+3,Joao Silva,joao.silva@email.com,111.222.333-44,30130-110,31 97777-0003,45,8900.00,Belo Horizonte,inativo,2023-03-10,820
+4,João Silva,joao.silva2@email.com,111.222.333-44,30130-110,31 97777-0003,45,8900.00,Belo Horizonte,inativo,2023-03-10,820
+5,Maria Fernanda,maria.f@email.com,222.333.444-55,40020-010,71 96666-0004,31,5600.00,Salvador,ativo,2023-04-05,710
+6,Pedro Henrique,pedro.h@email.com,333.444.555-66,60150-160,85 95555-0005,52,12000.00,Fortaleza,ativo,2023-05-18,890
+7,Lucia Mendes,NA,444.555.666-77,70040-010,61 94444-0006,29,N/A,Brasília,pendente,2023-06-22,
+8,Roberto Costa,roberto.costa@email.com,555.666.777-88,80010-010,41 93333-0007,67,6700.00,Curitiba,ativo,2023-07-30,760
+9,Fernanda Lima,,666.777.888-99,90010-001,51 92222-0008,23,2100.00,Porto Alegre,ativo,2023-08-14,620
+10,Gustavo Rocha,gustavo.r@email.com,777.888.999-00,69010-060,92 91111-0009,38,null,Manaus,inativo,2023-09-02,
+11,Camila Torres,camila.t@email.com,888.999.000-11,74010-010,62 90000-0010,41,7300.00,Goiânia,ativo,2023-10-11,800
+12,Andre Martins,andre.m@email.com,999.000.111-22,66010-080,91 89999-0011,55,15000.00,Belém,ativo,2023-11-25,870
+13,Juliana Carvalho,juliana.c@email.com,000.111.222-33,49010-060,79 88888-0012,26,3800.00,Aracaju,pendente,2023-12-03,640
+14,Marcos Alves,marcos.a@email.com,111.000.222-44,65010-050,98 87777-0013,33,4200.00,São Luís,ativo,2024-01-08,690
+15,Beatriz Nunes,beatriz.n@email.com,222.111.333-55,58010-000,83 86666-0014,47,9100.00,João Pessoa,ativo,2024-02-14,830
+16,Thiago Barbosa,thiago.b@email.com,333.222.444-66,64010-020,86 85555-0015,39,5500.00,Teresina,inativo,2024-03-19,720
+17,Daniela Pinto,daniela.p@email.com,444.333.555-77,57010-030,82 84444-0016,44,6100.00,Maceió,ativo,2024-04-23,775
+18,Felipe Gomes,felipe.g@email.com,555.444.666-88,68900-070,96 83333-0017,30,3600.00,Macapá,pendente,2024-05-07,655
+19,Renata Dias,renata.d@email.com,666.555.777-99,69900-610,95 82222-0018,36,4900.00,Porto Velho,ativo,2024-06-12,705
+20,Bruno Ferreira,bruno.f@email.com,777.666.888-00,69300-010,97 81111-0019,29,2900.00,Boa Vista,ativo,2024-07-20,660
+21,Ana Paula Silva,ana.paula@email.com,123.456.789-09,01310-100,11 99999-0001,34,4500.00,São Paulo,ativo,2023-01-15,750
+22,CLIENTE VIP,vip@corporativo.com.br,888.777.666-55,01310-200,11 79999-9999,50,250000.00,São Paulo,ativo,2024-08-01,999
+23,Sem Nome,-,999.888.777-66,04538-133,,28,3100.00,São Paulo,pendente,2024-08-15,
+24,Test User,none,,,, , , ,none,,
+25,Lucas Oliveira,lucas.o@email.com,100.200.300-40,05001-000,11 70000-0025,31,4100.00,São Paulo,ativo,2024-09-01,695
