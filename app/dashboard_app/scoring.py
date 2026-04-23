@@ -2,22 +2,109 @@ from __future__ import annotations
 
 import pandas as pd
 
-# Pesos de penalidade por ponto percentual de cada dimensao de qualidade.
-# Cap maximo por dimensao para evitar que um unico problema collapse o score inteiro.
-_MISSING_WEIGHT = 1.5       # por % de celulas faltantes (cap: 30 pts)
-_DUP_WEIGHT = 2.0           # por % de linhas duplicadas (cap: 20 pts)
-_CONSTANT_WEIGHT = 0.8      # por % de colunas constantes (cap: 10 pts)
-_PLACEHOLDER_WEIGHT = 0.8   # por % de celulas com tokens de nulo (cap: 10 pts)
-_TYPE_WEIGHT = 1.0          # por % de colunas com sugestao de tipo (cap: 15 pts)
-_OUTLIER_WEIGHT = 0.5       # por % media de outliers nas colunas numericas (cap: 10 pts)
+# Como funciona o sistema de score
+# ─────────────────────────────────────────────────────────────────────────────
+# O score parte de 100 e desconta penalidades por cada dimensão de qualidade.
+#
+# Fórmula por dimensão:
+#   penalidade = min(percentual_do_problema × peso, cap)
+#   score_final = 100 − soma_de_todas_as_penalidades  (clampado entre 0 e 100)
+#
+# Por que pesos diferentes por dimensão?
+#   - "duplicates" tem peso 2.0 (o mais alto): uma linha duplicada contamina
+#     agregações, contagens e modelos de forma direta e previsível — o dano
+#     é certo e imediato.
+#   - "missing" tem peso 1.5: dados ausentes comprometem análises, mas em
+#     muitos casos podem ser imputados sem grande perda de fidelidade.
+#   - "type" tem peso 1.0: colunas com tipo errado (ex: número como texto)
+#     quebram pipelines, mas o fix é determinístico e barato.
+#   - "placeholder" e "constant" têm peso 0.8: são problemas de estrutura,
+#     não de conteúdo — impactam menos análises do que missing real.
+#   - "outlier" tem peso 0.5 (o mais baixo): outliers podem ser legítimos
+#     (ex: transação VIP, evento raro); penalizar menos evita falsos alarmes.
+#
+# Por que caps por dimensão?
+#   Os caps impedem que um único problema domine o score inteiro. Por exemplo,
+#   se 80% das células estão vazias, sem cap a penalidade seria 120 pts — o
+#   score travaria em zero mesmo que os outros 20% fossem perfeitos. Com cap
+#   de 30 pts, o score mínimo por missing é 70, deixando as outras dimensões
+#   contribuírem proporcionalmente.
+#
+# Por que presets de domínio?
+#   Diferentes contextos têm tolerâncias distintas. Em dados financeiros,
+#   qualquer duplicata é potencialmente fraude — então o peso sobe para 3.0.
+#   Em dados de marketing, duplicatas de lead são comuns e menos críticas —
+#   peso 1.5. Os presets permitem calibrar sem alterar o código.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Limiares de nivel de qualidade
+# Pesos padrão por dimensão. Podem ser sobrescritos via custom_weights.
+_DEFAULT_WEIGHTS: dict[str, float] = {
+    "missing":     1.5,  # por % de células faltantes (cap: 30 pts)
+    "duplicates":  2.0,  # por % de linhas duplicadas (cap: 20 pts)
+    "constant":    0.8,  # por % de colunas constantes (cap: 10 pts)
+    "placeholder": 0.8,  # por % de células com tokens de nulo (cap: 10 pts)
+    "type":        1.0,  # por % de colunas com sugestão de tipo (cap: 15 pts)
+    "outlier":     0.5,  # por % média de outliers (cap: 10 pts)
+}
+
+_DEFAULT_CAPS: dict[str, float] = {
+    "missing": 30.0,
+    "duplicates": 20.0,
+    "constant": 10.0,
+    "placeholder": 10.0,
+    "type": 15.0,
+    "outlier": 10.0,
+}
+
+# Limiares de nível de qualidade
 _LEVEL_EXCELLENT = 90
 _LEVEL_GOOD = 75
 _LEVEL_ATTENTION = 55
 
+# Presets de domínio: ajustam os pesos conforme o contexto dos dados
+DOMAIN_PRESETS: dict[str, dict[str, float]] = {
+    "Geral": _DEFAULT_WEIGHTS,
+    "Financeiro": {
+        "missing": 2.5,
+        "duplicates": 3.0,
+        "constant": 0.8,
+        "placeholder": 1.2,
+        "type": 1.5,
+        "outlier": 1.0,
+    },
+    "Marketing / CRM": {
+        "missing": 1.0,
+        "duplicates": 1.5,
+        "constant": 0.5,
+        "placeholder": 0.8,
+        "type": 0.8,
+        "outlier": 0.3,
+    },
+    "RH / Pessoas": {
+        "missing": 2.0,
+        "duplicates": 2.5,
+        "constant": 0.6,
+        "placeholder": 1.0,
+        "type": 1.0,
+        "outlier": 0.4,
+    },
+    "Logistica / Operacoes": {
+        "missing": 1.8,
+        "duplicates": 2.0,
+        "constant": 0.7,
+        "placeholder": 0.9,
+        "type": 1.2,
+        "outlier": 0.8,
+    },
+}
 
-def compute_quality_score(analysis: dict) -> tuple[float, str, dict[str, float]]:
+
+def compute_quality_score(
+    analysis: dict,
+    custom_weights: dict[str, float] | None = None,
+) -> tuple[float, str, dict[str, float]]:
+    weights = {**_DEFAULT_WEIGHTS, **(custom_weights or {})}
+
     rows = max(int(analysis["summary"]["rows"]), 1)
     cols = max(int(analysis["summary"]["columns"]), 1)
     total_cells = max(rows * cols, 1)
@@ -42,19 +129,21 @@ def compute_quality_score(analysis: dict) -> tuple[float, str, dict[str, float]]
     breakdown: dict[str, float] = {}
     penalty = 0.0
 
-    def _deduct(label: str, pct: float, weight: float, cap: float) -> None:
+    def _deduct(label: str, key: str, pct: float) -> None:
         nonlocal penalty
-        d = min(pct * weight, cap)
+        w = weights.get(key, _DEFAULT_WEIGHTS[key])
+        cap = _DEFAULT_CAPS[key]
+        d = min(pct * w, cap)
         if d > 0:
             penalty += d
             breakdown[label] = -round(d, 1)
 
-    _deduct("Valores ausentes", missing_pct, _MISSING_WEIGHT, 30.0)
-    _deduct("Linhas duplicadas", dup_pct, _DUP_WEIGHT, 20.0)
-    _deduct("Colunas constantes", constant_pct, _CONSTANT_WEIGHT, 10.0)
-    _deduct("Tokens de nulo", placeholder_pct, _PLACEHOLDER_WEIGHT, 10.0)
-    _deduct("Inconsistencias de tipo", type_issue_pct, _TYPE_WEIGHT, 15.0)
-    _deduct("Outliers", outlier_pct, _OUTLIER_WEIGHT, 10.0)
+    _deduct("Valores ausentes",       "missing",     missing_pct)
+    _deduct("Linhas duplicadas",      "duplicates",  dup_pct)
+    _deduct("Colunas constantes",     "constant",    constant_pct)
+    _deduct("Tokens de nulo",         "placeholder", placeholder_pct)
+    _deduct("Inconsistencias de tipo","type",        type_issue_pct)
+    _deduct("Outliers",               "outlier",     outlier_pct)
 
     score = round(max(0.0, min(100.0, 100.0 - penalty)), 1)
 
@@ -119,6 +208,31 @@ def build_prioritized_issues(analysis: dict) -> pd.DataFrame:
                         f"({row['confidence_pct']}% de confianca)"
                     ),
                     "acao_recomendada": "Converter tipo antes de analise/modelagem",
+                }
+            )
+
+    # Alertas de cardinalidade
+    if "cardinality_table" in analysis and not analysis["cardinality_table"].empty:
+        for _, row in analysis["cardinality_table"].iterrows():
+            issues.append(
+                {
+                    "prioridade": "Media",
+                    "tipo_problema": "Cardinalidade suspeita",
+                    "detalhes": f"Coluna {row['column']}: {row['flag']} ({row['unique_pct']}% unicos)",
+                    "acao_recomendada": "Verificar se e ID/chave ou categorica numerica mal tipada",
+                }
+            )
+
+    # Alertas de quase-duplicatas
+    if "fuzzy_table" in analysis and not analysis["fuzzy_table"].empty:
+        cols_with_fuzzy = analysis["fuzzy_table"]["column"].unique()
+        for col in cols_with_fuzzy[:3]:
+            issues.append(
+                {
+                    "prioridade": "Media",
+                    "tipo_problema": "Quase-duplicatas textuais",
+                    "detalhes": f"Coluna {col} tem valores com alta similaridade (possivel erro de digitacao)",
+                    "acao_recomendada": "Padronizar categorias com fuzzy matching",
                 }
             )
 

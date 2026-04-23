@@ -17,7 +17,6 @@ def _normalize_column_names(columns: pd.Index) -> list[str]:
         .str.replace(r"(^_+|_+$)", "", regex=True)
         .tolist()
     )
-    # Deduplicar: se dois nomes colidirem, acrescentar sufixo _1, _2, ...
     seen: dict[str, int] = {}
     result: list[str] = []
     for name in normalized:
@@ -40,7 +39,21 @@ def clean_dataset(
     drop_high_missing_columns_pct: float = 100.0,
     fill_numeric: str = "median",
     fill_categorical: str = "mode",
+    outlier_treatment: str = "none",
+    outlier_method: str = "iqr",
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Limpa e trata o dataset conforme as opcoes selecionadas.
+
+    outlier_treatment:
+        "none"   — nenhuma acao (padrao)
+        "cap"    — capping pelos limites IQR (winsorization)
+        "remove" — remove linhas com outliers
+
+    outlier_method:
+        "iqr"     — usa regra 1.5×IQR
+        "zscore"  — usa |z| > 3
+    """
     cleaned = df.copy()
     report: dict[str, Any] = {
         "rows_before": int(df.shape[0]),
@@ -91,12 +104,10 @@ def clean_dataset(
     if drop_high_missing_columns_pct < 100.0:
         miss_pct = cleaned.isna().mean() * 100.0
         candidates = miss_pct[miss_pct > float(drop_high_missing_columns_pct)].index.tolist()
-        # Nao remover todas as colunas — manter pelo menos uma
         if candidates and len(candidates) < len(cleaned.columns):
             dropped_cols = candidates
             cleaned = cleaned.drop(columns=dropped_cols)
         elif candidates:
-            # Todas as colunas seriam removidas — ignorar a operacao
             dropped_cols = []
     report["dropped_high_missing_columns"] = dropped_cols
 
@@ -124,6 +135,56 @@ def clean_dataset(
                 fill_value = "unknown"
             cleaned[col] = cleaned[col].fillna(fill_value)
     report["categorical_fill_strategy"] = fill_categorical
+
+    # Tratamento de outliers
+    outliers_treated_cols: list[str] = []
+    outliers_rows_removed = 0
+    if outlier_treatment in {"cap", "remove"}:
+        numeric_cols = cleaned.select_dtypes(include=["number"]).columns.tolist()
+        if outlier_treatment == "remove":
+            outlier_mask = pd.Series([False] * len(cleaned), index=cleaned.index)
+        for col in numeric_cols:
+            series = cleaned[col].dropna()
+            if series.empty:
+                continue
+            if outlier_method == "zscore":
+                std = series.std()
+                if std == 0:
+                    continue
+                z = (cleaned[col] - series.mean()) / std
+                is_outlier = z.abs() > 3.0
+            else:  # iqr (default)
+                q1 = series.quantile(0.25)
+                q3 = series.quantile(0.75)
+                iqr = q3 - q1
+                if iqr == 0:
+                    continue
+                lower = q1 - 1.5 * iqr
+                upper = q3 + 1.5 * iqr
+                is_outlier = (cleaned[col] < lower) | (cleaned[col] > upper)
+
+            if not is_outlier.any():
+                continue
+
+            if outlier_treatment == "cap":
+                if outlier_method == "zscore":
+                    mean = series.mean()
+                    std = series.std()
+                    lower = mean - 3.0 * std
+                    upper = mean + 3.0 * std
+                cleaned[col] = cleaned[col].clip(lower=lower, upper=upper)
+                outliers_treated_cols.append(col)
+            elif outlier_treatment == "remove":
+                outlier_mask = outlier_mask | is_outlier.reindex(cleaned.index, fill_value=False)
+
+        if outlier_treatment == "remove" and outlier_mask.any():
+            outliers_rows_removed = int(outlier_mask.sum())
+            cleaned = cleaned[~outlier_mask].reset_index(drop=True)
+
+    report["outlier_treatment"] = outlier_treatment
+    report["outlier_method"] = outlier_method
+    report["outlier_capped_columns"] = outliers_treated_cols
+    report["outlier_rows_removed"] = outliers_rows_removed
 
     report["rows_after"] = int(cleaned.shape[0])
     report["columns_after"] = int(cleaned.shape[1])

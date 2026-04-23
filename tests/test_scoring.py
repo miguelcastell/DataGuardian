@@ -80,3 +80,34 @@ class TestComputeQualityScore:
         score_no, _, _ = compute_quality_score(no_dups)
         score_with, _, _ = compute_quality_score(with_dups)
         assert score_no > score_with
+
+
+class TestDomainPresets:
+    def test_financial_preset_penalizes_duplicates_more(self) -> None:
+        from app.dashboard_app.scoring import DOMAIN_PRESETS
+        # 5% de duplicatas: Geral penaliza 5×2.0=10pts, Financeiro 5×3.0=15pts — abaixo do cap (20pts)
+        analysis = _make_analysis(duplicate_rows=5, duplicate_rows_pct=5.0)
+        score_geral, _, _ = compute_quality_score(analysis, custom_weights=DOMAIN_PRESETS["Geral"])
+        score_fin, _, _ = compute_quality_score(analysis, custom_weights=DOMAIN_PRESETS["Financeiro"])
+        assert score_fin < score_geral
+
+    def test_all_presets_return_valid_score(self) -> None:
+        from app.dashboard_app.scoring import DOMAIN_PRESETS
+        analysis = _make_analysis(missing_cells_pct=5.0, duplicate_rows_pct=3.0)
+        for name, weights in DOMAIN_PRESETS.items():
+            score, level, _ = compute_quality_score(analysis, custom_weights=weights)
+            assert 0.0 <= score <= 100.0, f"Score fora do range para preset {name}"
+            assert level in ("Excelente", "Bom", "Atencao", "Critico")
+
+    def test_custom_weights_override_defaults(self) -> None:
+        # Peso muito alto para missing → score muito baixo
+        analysis = _make_analysis(missing_cells_pct=10.0)
+        score_normal, _, _ = compute_quality_score(analysis)
+        score_heavy, _, _ = compute_quality_score(analysis, custom_weights={"missing": 10.0})
+        assert score_heavy < score_normal
+
+    def test_no_custom_weights_uses_defaults(self) -> None:
+        analysis = _make_analysis()
+        score_none, _, _ = compute_quality_score(analysis, custom_weights=None)
+        score_default, _, _ = compute_quality_score(analysis)
+        assert score_none == score_default
