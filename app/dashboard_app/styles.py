@@ -98,10 +98,10 @@ def apply_design_system() -> None:
             background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 55%, #155eef 100%);
             color: #ffffff;
             border-radius: var(--radius-lg);
-            padding: 28px 32px 24px;
+            padding: 36px 32px 24px;
             margin-bottom: 24px;
             position: relative;
-            overflow: hidden;
+            overflow: visible;
           }
           .dg-hero::before {
             content: '';
@@ -124,24 +124,29 @@ def apply_design_system() -> None:
           .dg-hero-top {
             display: flex;
             align-items: center;
-            gap: 14px;
-            margin-bottom: 14px;
+            justify-content: flex-start;
+            min-height: 72px;
+            margin-bottom: 10px;
+            padding-left: 12px;
           }
           .dg-hero-logo {
-            width: 58px;
-            height: 58px;
-            border-radius: 16px;
-            background: rgba(255,255,255,.12);
-            border: 1px solid rgba(255,255,255,.2);
             display: flex;
             align-items: center;
             justify-content: center;
-            overflow: hidden;
+            width: 100%;
+            background: transparent;
+            border: none;
+            padding: 0;
           }
           .dg-hero-logo img {
-            width: 44px;
+            width: min(54vw, 240px);
+            max-width: 240px;
+            max-height: 80px;
             height: auto;
             display: block;
+            object-fit: contain;
+            margin-top: 0;
+            filter: drop-shadow(0 6px 16px rgba(0,0,0,.18));
           }
           .dg-logo-pill {
             background: rgba(255,255,255,.15);
@@ -535,8 +540,6 @@ def render_hero(
 ) -> None:
     """Hero section com gradiente, identidade DG e status do dataset ativo."""
     palette = QUALITY_PALETTE.get(quality_level or "", QUALITY_PALETTE["Bom"])
-    logo_vertical = get_asset_data_uri("logo.png")
-
     status_html = ""
     if dataset_name:
         badge_style = (
@@ -577,9 +580,6 @@ def render_hero(
         f"""
         <div class="dg-hero">
           <div class="dg-hero-top">
-            <div class="dg-hero-logo">
-              <img src="{logo_vertical}" alt="Data Guardian" />
-            </div>
             <div>
               <h1 class="dg-hero-title">Data Guardian</h1>
               <p class="dg-hero-subtitle">Plataforma de diagnostico e tratamento de qualidade de dados.</p>

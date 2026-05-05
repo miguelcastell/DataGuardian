@@ -20,7 +20,7 @@ from src.data.quality import analyze_dataset
 def run_dashboard() -> None:
     st.set_page_config(
         page_title="Data Guardian",
-        page_icon="DG",
+        page_icon="assets/logo.png",
         layout="wide",
         initial_sidebar_state="expanded",
     )
