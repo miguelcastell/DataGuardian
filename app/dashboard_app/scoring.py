@@ -2,49 +2,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-# Como funciona o sistema de score
-# ─────────────────────────────────────────────────────────────────────────────
-# O score parte de 100 e desconta penalidades por cada dimensão de qualidade.
-#
-# Fórmula por dimensão:
-#   penalidade = min(percentual_do_problema × peso, cap)
-#   score_final = 100 − soma_de_todas_as_penalidades  (clampado entre 0 e 100)
-#
-# Por que pesos diferentes por dimensão?
-#   - "duplicates" tem peso 2.0 (o mais alto): uma linha duplicada contamina
-#     agregações, contagens e modelos de forma direta e previsível — o dano
-#     é certo e imediato.
-#   - "missing" tem peso 1.5: dados ausentes comprometem análises, mas em
-#     muitos casos podem ser imputados sem grande perda de fidelidade.
-#   - "type" tem peso 1.0: colunas com tipo errado (ex: número como texto)
-#     quebram pipelines, mas o fix é determinístico e barato.
-#   - "placeholder" e "constant" têm peso 0.8: são problemas de estrutura,
-#     não de conteúdo — impactam menos análises do que missing real.
-#   - "outlier" tem peso 0.5 (o mais baixo): outliers podem ser legítimos
-#     (ex: transação VIP, evento raro); penalizar menos evita falsos alarmes.
-#
-# Por que caps por dimensão?
-#   Os caps impedem que um único problema domine o score inteiro. Por exemplo,
-#   se 80% das células estão vazias, sem cap a penalidade seria 120 pts — o
-#   score travaria em zero mesmo que os outros 20% fossem perfeitos. Com cap
-#   de 30 pts, o score mínimo por missing é 70, deixando as outras dimensões
-#   contribuírem proporcionalmente.
-#
-# Por que presets de domínio?
-#   Diferentes contextos têm tolerâncias distintas. Em dados financeiros,
-#   qualquer duplicata é potencialmente fraude — então o peso sobe para 3.0.
-#   Em dados de marketing, duplicatas de lead são comuns e menos críticas —
-#   peso 1.5. Os presets permitem calibrar sem alterar o código.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Pesos padrão por dimensão. Podem ser sobrescritos via custom_weights.
 _DEFAULT_WEIGHTS: dict[str, float] = {
-    "missing":     1.5,  # por % de células faltantes (cap: 30 pts)
-    "duplicates":  2.0,  # por % de linhas duplicadas (cap: 20 pts)
-    "constant":    0.8,  # por % de colunas constantes (cap: 10 pts)
-    "placeholder": 0.8,  # por % de células com tokens de nulo (cap: 10 pts)
-    "type":        1.0,  # por % de colunas com sugestão de tipo (cap: 15 pts)
-    "outlier":     0.5,  # por % média de outliers (cap: 10 pts)
+    "missing":     1.5,
+    "duplicates":  2.0,
+    "constant":    0.8,
+    "placeholder": 0.8,
+    "type":        1.0,
+    "outlier":     0.5,
 }
 
 _DEFAULT_CAPS: dict[str, float] = {
@@ -56,12 +20,10 @@ _DEFAULT_CAPS: dict[str, float] = {
     "outlier": 10.0,
 }
 
-# Limiares de nível de qualidade
 _LEVEL_EXCELLENT = 90
 _LEVEL_GOOD = 75
 _LEVEL_ATTENTION = 55
 
-# Presets de domínio: ajustam os pesos conforme o contexto dos dados
 DOMAIN_PRESETS: dict[str, dict[str, float]] = {
     "Geral": _DEFAULT_WEIGHTS,
     "Financeiro": {
