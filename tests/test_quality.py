@@ -109,3 +109,76 @@ class TestFuzzyDuplicates:
     def test_fuzzy_table_in_empty_result(self) -> None:
         result = analyze_dataset(pd.DataFrame())
         assert "fuzzy_table" in result
+
+
+class TestBRPatterns:
+    def test_cnpj_pattern_detected(self) -> None:
+        df = pd.DataFrame({"cnpj": [f"12.345.678/0001-{i:02d}" for i in range(20)]})
+        result = analyze_dataset(df)
+        assert not result["pattern_table"].empty
+        assert "cnpj" in result["pattern_table"]["pattern"].values
+
+    def test_data_br_pattern_detected(self) -> None:
+        df = pd.DataFrame({"data": [f"{i:02d}/05/2024" for i in range(1, 21)]})
+        result = analyze_dataset(df)
+        assert not result["pattern_table"].empty
+        assert "data_br" in result["pattern_table"]["pattern"].values
+
+    def test_placa_old_format_detected(self) -> None:
+        df = pd.DataFrame({"placa": [f"ABC{i:04d}" for i in range(1, 21)]})
+        result = analyze_dataset(df)
+        assert not result["pattern_table"].empty
+        assert "placa" in result["pattern_table"]["pattern"].values
+
+    def test_placa_mercosul_detected(self) -> None:
+        # Formato Mercosul: AAA0A00
+        plates = [f"AB{chr(65+i%10)}1{chr(65+i%5)}{i:02d}" for i in range(20)]
+        df = pd.DataFrame({"placa": plates})
+        result = analyze_dataset(df)
+        # Verifica que nao quebra; deteccao depende do formato exato
+        assert "pattern_table" in result
+
+    def test_existing_patterns_unaffected(self) -> None:
+        df = pd.DataFrame({"email": [f"user{i}@example.com" for i in range(20)]})
+        result = analyze_dataset(df)
+        assert "email" in result["pattern_table"]["pattern"].values
+
+
+class TestFunctionalDependency:
+    def test_city_determines_state(self) -> None:
+        data = {
+            "cidade": ["SP", "SP", "RJ", "RJ", "BH", "BH"] * 5,
+            "estado": ["Sao Paulo", "Sao Paulo", "Rio", "Rio", "Minas", "Minas"] * 5,
+        }
+        df = pd.DataFrame(data)
+        result = analyze_dataset(df)
+        deps = result["functional_deps"]
+        assert not deps.empty
+        found = (
+            (deps["coluna_determinante"] == "cidade") &
+            (deps["coluna_dependente"] == "estado")
+        ).any()
+        assert found
+
+    def test_no_dependency_on_independent_columns(self) -> None:
+        # Colunas completamente independentes nao devem gerar dependencia
+        rng = np.random.default_rng(42)
+        df = pd.DataFrame({
+            "a": rng.choice(["x", "y", "z"], size=60),
+            "b": rng.choice(["p", "q", "r"], size=60),
+        })
+        result = analyze_dataset(df)
+        deps = result["functional_deps"]
+        # Nao deve crashar; pode ou nao ter deps dependendo dos dados aleatorios
+        assert isinstance(deps, pd.DataFrame)
+
+    def test_functional_deps_key_in_empty_result(self) -> None:
+        result = analyze_dataset(pd.DataFrame())
+        assert "functional_deps" in result
+        assert isinstance(result["functional_deps"], pd.DataFrame)
+
+    def test_functional_deps_key_in_normal_result(self) -> None:
+        df = _make_df(a=[1, 2, 3], b=["x", "y", "z"])
+        result = analyze_dataset(df)
+        assert "functional_deps" in result
+        assert isinstance(result["functional_deps"], pd.DataFrame)

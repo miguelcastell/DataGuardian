@@ -553,27 +553,30 @@ def render_hero(
     )
 
 
-def render_stepper(active: str) -> str:
-  """Navegacao principal clicavel no conteudo (sem estado de concluido)."""
-  labels = {
-    "Painel": "1 Diagnostico",
-    "Tratamento": "2 Tratamento",
-    "Insights BI": "3 Insights BI",
-  }
-  options = ["Painel", "Tratamento", "Insights BI"]
-  selected = active if active in options else "Painel"
+def render_stepper(active: str, extra_sections: list[str] | None = None) -> str:
+    """Navegacao principal clicavel. extra_sections adiciona abas opcionais (ex: 'Drift')."""
+    labels: dict[str, str] = {
+        "Painel": "1 Diagnostico",
+        "Tratamento": "2 Tratamento",
+        "Insights BI": "3 Insights BI",
+    }
+    for i, sec in enumerate(extra_sections or [], start=4):
+        labels[sec] = f"{i} {sec}"
 
-  picked = st.segmented_control(
-    "Navegacao principal",
-    options=options,
-    default=selected,
-    format_func=lambda x: labels[x],
-    selection_mode="single",
-    width="stretch",
-    label_visibility="collapsed",
-  )
+    options = ["Painel", "Tratamento", "Insights BI"] + (extra_sections or [])
+    selected = active if active in options else "Painel"
 
-  return picked or selected
+    picked = st.segmented_control(
+        "Navegacao principal",
+        options=options,
+        default=selected,
+        format_func=lambda x: labels[x],
+        selection_mode="single",
+        width="stretch",
+        label_visibility="collapsed",
+    )
+
+    return picked or selected
 
 
 def metric_card(

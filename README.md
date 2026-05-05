@@ -50,6 +50,151 @@ Faça upload de um CSV → receba um diagnóstico completo → trate os problema
 
 ---
 
+## Como funciona
+
+### Fluxo interno de dados
+
+```
+CSV (upload)
+    │
+    ▼
+data_io.py          → lê e faz cache do DataFrame por hash do arquivo
+    │
+    ▼
+quality.py          → analyze_dataset(df) → dicionário de análise
+    │
+    ▼
+scoring.py          → compute_quality_score(analysis) → score, nível, breakdown
+    │
+    ▼
+sections.py         → renderiza os 5 painéis na UI (side effects apenas)
+    │
+    ▼
+cleaning.py         → clean_dataset(df, **options) → DataFrame tratado + relatório
+    │
+    ▼
+Export              → CSV / Excel / JSON
+```
+
+### Métodos de detecção
+
+#### Dados faltantes
+`df.isna()` — contagem direta e percentual por coluna e no total.
+
+#### Placeholders de nulo
+Varredura por token em colunas texto. Tokens reconhecidos: `""`, `" "`, `na`, `n/a`, `null`, `none`, `nan`, `-`. A comparação é case-insensitive.
+
+#### Outliers — IQR + Z-score combinados
+Dois métodos rodados em paralelo para colunas numéricas:
+- **IQR**: outlier se `valor < Q1 − 1.5×IQR` ou `valor > Q3 + 1.5×IQR`
+- **Z-score**: outlier se `|z| > 3` (onde `z = (valor − média) / desvio padrão`)
+
+O score usa a média IQR das colunas; ambas as contagens são exibidas na UI.
+
+#### Inferência de tipo
+Para cada coluna `object`, tenta converter todos os valores:
+- Se ≥ 80% convertíveis para numérico → sugere `numeric`
+- Se ≥ 80% convertíveis para datetime → sugere `datetime`
+
+Colunas já tipadas corretamente não são reportadas.
+
+#### Padrões semânticos brasileiros
+Regex `fullmatch` aplicado por coluna. Um padrão é confirmado se ≥ 60% dos valores não-nulos casam:
+
+| Padrão | Exemplo |
+|---|---|
+| `email` | `ana@empresa.com.br` |
+| `cpf` | `123.456.789-09` ou `12345678909` |
+| `cep` | `01310-100` ou `01310100` |
+| `telefone` | `11 99999-0001` ou `+55 (11) 99999-0001` |
+| `url` | `https://exemplo.com` |
+
+No máximo um padrão é atribuído por coluna (o primeiro que passar o limiar).
+
+#### Cardinalidade suspeita
+- **Alta**: coluna texto com >90% de valores únicos e mais de 10 registros → possível ID/chave primária
+- **Baixa**: coluna numérica com ≤5 valores únicos e mais de 10 registros → possível categórica mal tipada
+
+#### Quase-duplicatas textuais
+Usa `rapidfuzz.fuzz.ratio` entre pares de valores únicos (até 200 por coluna). Pares com similaridade entre 80% e 99% são reportados. Se `rapidfuzz` não estiver instalado, a detecção é silenciosamente pulada.
+
+---
+
+### Sistema de score
+
+O score parte de 100 e desconta penalidades por dimensão:
+
+```
+penalidade_por_dimensão = min(percentual_do_problema × peso, cap)
+score = 100 − soma(penalidades)   [clampado entre 0 e 100]
+```
+
+| Dimensão | Peso padrão | Cap |
+|---|---|---|
+| Linhas duplicadas | 2.0 | 20 pts |
+| Valores ausentes | 1.5 | 30 pts |
+| Inconsistências de tipo | 1.0 | 15 pts |
+| Tokens de nulo / Colunas constantes | 0.8 | 10 pts cada |
+| Outliers | 0.5 | 10 pts |
+
+Os caps impedem que um único problema zerize o score — por exemplo, 80% de ausência sem cap geraria uma penalidade de 120 pts.
+
+**Presets de domínio** ajustam os pesos sem alterar o código:
+
+| Preset | Duplicatas | Ausentes | Tipo |
+|---|---|---|---|
+| Geral | 2.0 | 1.5 | 1.0 |
+| Financeiro | 3.0 | 2.5 | 1.5 |
+| Marketing / CRM | 1.5 | 1.0 | 0.8 |
+| RH / Pessoas | 2.5 | 2.0 | 1.0 |
+| Logística / Operações | 2.0 | 1.8 | 1.2 |
+
+**Níveis de qualidade:**
+
+| Score | Nível |
+|---|---|
+| ≥ 90 | Excelente |
+| 75–89 | Bom |
+| 55–74 | Atenção |
+| < 55 | Crítico |
+
+---
+
+### Tratamento de dados (`clean_dataset`)
+
+As transformações são aplicadas nesta ordem:
+
+1. Normalização de nomes de colunas → `lowercase_snake_case`, colisões resolvidas com sufixo `_1`, `_2`…
+2. Trim de strings → `str.strip()` em todas as colunas texto
+3. Substituição de tokens de nulo → converte placeholders para `NaN`
+4. Remoção de duplicatas exatas
+5. Remoção de colunas acima do limiar de faltantes configurado
+6. Imputação numérica → mediana, média ou zero
+7. Imputação categórica → moda ou `"unknown"`
+8. Tratamento de outliers:
+   - `cap` (winsorização) → clipa nos limites IQR ou ±3σ
+   - `remove` → remove linhas que contenham outliers em qualquer coluna numérica
+
+A função retorna `(DataFrame_tratado, relatório_dict)`. O relatório contém contagens de cada operação aplicada (linhas removidas, colunas renomeadas, tokens convertidos, etc.).
+
+---
+
+## Testes
+
+```bash
+python -m pytest -q
+```
+
+45 testes, todos passando:
+
+| Arquivo | Testes | O que cobre |
+|---|---|---|
+| `tests/test_quality.py` | 16 | `analyze_dataset` — guards, lógica de detecção, cardinalidade, fuzzy |
+| `tests/test_cleaning.py` | 18 | `clean_dataset` — normalização, dedup, imputação, tratamento de outliers |
+| `tests/test_scoring.py` | 11 | `compute_quality_score` — range, breakdown, presets de domínio |
+
+---
+
 ## Instalação
 
 ```bash

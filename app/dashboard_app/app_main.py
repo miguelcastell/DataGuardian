@@ -8,6 +8,7 @@ from app.dashboard_app.scoring import DOMAIN_PRESETS, build_prioritized_issues, 
 from app.dashboard_app.sections import (
     render_alerts,
     render_cleaning_section,
+    render_drift_section,
     render_overview,
     render_quality_issues,
     render_visual_insights,
@@ -57,21 +58,33 @@ def run_dashboard() -> None:
 
     with st.spinner("Carregando datasets..."):
         datasets: dict[str, pd.DataFrame] = {}
+        file_metas: dict[str, dict[str, str]] = {}
         for uploaded in uploaded_files:
             file_bytes = uploaded.getvalue()
-            df, err = read_uploaded_csv(file_bytes, uploaded.name)
+            df, err, meta = read_uploaded_csv(file_bytes, uploaded.name)
             if err:
                 st.error(f"**{uploaded.name}**: {err}")
             else:
                 datasets[uploaded.name] = df
+                file_metas[uploaded.name] = meta
 
     if not datasets:
         render_hero()
         st.warning("Nenhum arquivo foi carregado com sucesso. Verifique os arquivos enviados.")
         return
 
+    drift_ref_df: pd.DataFrame | None = None
+
     with st.sidebar:
         selected_file = st.selectbox("Dataset ativo", options=list(datasets.keys()))
+
+        active_meta = file_metas.get(selected_file, {})
+        if active_meta:
+            st.caption(
+                f"Codificacao: `{active_meta.get('encoding', '?')}` "
+                f"· Delimitador: `{active_meta.get('delimiter', '?')}`"
+            )
+
         st.markdown("---")
         st.markdown("### Configuracao de score")
         domain_preset = st.selectbox(
@@ -80,6 +93,25 @@ def run_dashboard() -> None:
             help="Ajusta os pesos do score de qualidade para o contexto dos seus dados.",
         )
         selected_weights = DOMAIN_PRESETS[domain_preset]
+
+        st.markdown("---")
+        st.markdown("### Comparacao de drift")
+        drift_uploaded = st.file_uploader(
+            "Dataset de referencia (opcional)",
+            type=["csv"],
+            key="drift_reference",
+            help=(
+                "Carregue um CSV de referencia (ex: mes anterior) para comparar "
+                "distribuicoes e detectar drift entre os dois datasets."
+            ),
+        )
+
+    if drift_uploaded is not None:
+        drift_bytes = drift_uploaded.getvalue()
+        drift_ref_df, drift_err, _ = read_uploaded_csv(drift_bytes, drift_uploaded.name)
+        if drift_err:
+            st.warning(f"Arquivo de referencia para drift: {drift_err}")
+            drift_ref_df = None
 
     df_original = datasets[selected_file]
 
@@ -94,7 +126,6 @@ def run_dashboard() -> None:
     quality_score, quality_level, score_breakdown = compute_quality_score(analysis, custom_weights=selected_weights)
     issues_df = build_prioritized_issues(analysis)
 
-    # Hero com status do dataset ativo
     render_hero(
         dataset_name=selected_file,
         quality_score=quality_score,
@@ -103,8 +134,11 @@ def run_dashboard() -> None:
         cols=analysis["summary"]["columns"],
     )
 
-    # Navegacao principal clicavel
-    section = render_stepper(st.session_state.get("main_section", "Painel"))
+    extra_sections = ["Drift"] if drift_ref_df is not None else []
+    section = render_stepper(
+        st.session_state.get("main_section", "Painel"),
+        extra_sections=extra_sections,
+    )
     st.session_state["main_section"] = section
 
     if section == "Painel":
@@ -123,4 +157,12 @@ def run_dashboard() -> None:
         if not st.session_state.get("show_bi"):
             st.warning("Abra os insights BI a partir de Tratamento para carregar primeiro os dados tratados.")
         source_df = st.session_state.get("cleaned_df", df_original)
-        render_visual_insights(source_df)
+        render_visual_insights(
+            source_df,
+            analysis=analysis,
+            quality_score=quality_score,
+            quality_level=quality_level,
+        )
+
+    if section == "Drift" and drift_ref_df is not None:
+        render_drift_section(df_original, drift_ref_df)

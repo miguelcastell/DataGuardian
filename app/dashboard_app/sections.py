@@ -241,6 +241,17 @@ def render_quality_issues(analysis: dict, issues_df: pd.DataFrame) -> None:
             st.info("Nenhuma quase-duplicata textual detectada."
                     " (Instale rapidfuzz para habilitar: `pip install rapidfuzz`)")
 
+    st.markdown("#### Dependencias funcionais entre colunas")
+    fd = analysis.get("functional_deps", pd.DataFrame())
+    if not fd.empty:
+        st.dataframe(fd, width="stretch")
+        st.caption(
+            "Uma coluna determinante mapeia cada valor para exatamente um valor da coluna dependente "
+            "(ex: cidade → estado). Colunas dependentes podem ser redundantes em modelos."
+        )
+    else:
+        st.info("Nenhuma dependencia funcional detectada.")
+
 def render_alerts(analysis: dict, quality_score: float) -> None:
     st.markdown("### Alertas")
 
@@ -269,89 +280,426 @@ def render_alerts(analysis: dict, quality_score: float) -> None:
             )
 
 
-def render_visual_insights(df: pd.DataFrame) -> None:
-    numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-    categorical_cols = df.select_dtypes(include=["object", "string", "category"]).columns.tolist()
+def _fmt_number(val: float) -> str:
+    """Formata um numero para exibicao em KPI card (K / M para grandes valores)."""
+    if abs(val) >= 1_000_000:
+        return f"{val / 1_000_000:.2f}M"
+    if abs(val) >= 1_000:
+        return f"{val / 1_000:.1f}K"
+    if val == int(val):
+        return f"{int(val):,}"
+    return f"{val:,.2f}"
 
-    st.markdown("### Insights visuais")
 
-    if not numeric_cols and not categorical_cols:
+def _analysis_numeric_cols(df: pd.DataFrame) -> list[str]:
+    """Numericas com variancia real — exclui IDs (>95% unicos) e constantes."""
+    n = max(len(df), 1)
+    result = []
+    for col in df.select_dtypes(include=["number"]).columns:
+        s = df[col].dropna()
+        if s.empty or s.std() == 0:
+            continue
+        if s.nunique() / n > 0.95:
+            continue
+        result.append(col)
+    return result
+
+
+def _grouping_cats(df: pd.DataFrame) -> list[str]:
+    """Categoricas com 2–25 valores unicos — boas para agrupar."""
+    return [
+        col for col in df.select_dtypes(include=["object", "string"]).columns
+        if 2 <= int(df[col].nunique(dropna=True)) <= 25
+    ]
+
+
+def _detect_date_cols(df: pd.DataFrame, analysis: dict | None) -> list[str]:
+    """Detecta colunas de data por sugestao de tipo ou por nome heuristico."""
+    found: list[str] = []
+    if analysis:
+        ts = analysis.get("type_suggestions", pd.DataFrame())
+        if not ts.empty:
+            found = ts.loc[ts["suggested_type"] == "datetime", "column"].tolist()
+    keywords = {"data", "date", "dt", "mes", "ano", "year", "month", "dia", "day", "periodo", "cadastro"}
+    for col in df.columns:
+        if col in found:
+            continue
+        if any(kw in col.lower() for kw in keywords):
+            try:
+                pd.to_datetime(df[col].dropna().astype(str).head(20), format="mixed")
+                found.append(col)
+            except Exception:
+                pass
+    return found
+
+
+def render_visual_insights(
+    df: pd.DataFrame,
+    analysis: dict | None = None,
+    quality_score: float | None = None,
+    quality_level: str | None = None,
+) -> None:
+    an_nums = _analysis_numeric_cols(df)
+    grp_cats = _grouping_cats(df)
+    all_nums = df.select_dtypes(include=["number"]).columns.tolist()
+    all_cats = df.select_dtypes(include=["object", "string", "category"]).columns.tolist()
+    date_cols = _detect_date_cols(df, analysis)
+
+    st.markdown("### Insights BI")
+
+    if not all_nums and not all_cats:
         st.info("Sem colunas numericas ou categoricas para visualizar.")
         return
 
-    c1, c2 = st.columns(2)
+    # ── KPI cards — metricas dos dados ───────────────────────────────────────
+    kpi_cols = an_nums[:6] if an_nums else all_nums[:6]
+    if kpi_cols:
+        cols_per_row = min(len(kpi_cols), 4)
+        rows = [kpi_cols[i:i + cols_per_row] for i in range(0, len(kpi_cols), cols_per_row)]
+        for row_cols in rows:
+            grid = st.columns(len(row_cols))
+            for gc, col in zip(grid, row_cols):
+                s = df[col].dropna()
+                if s.empty:
+                    continue
+                mean_val = float(s.mean())
+                median_val = float(s.median())
+                gc.metric(
+                    label=col,
+                    value=_fmt_number(mean_val),
+                    delta=f"mediana {_fmt_number(median_val)}",
+                    delta_color="off",
+                    help=f"min {_fmt_number(float(s.min()))} · max {_fmt_number(float(s.max()))} · desvio {_fmt_number(float(s.std()))}",
+                )
+        st.markdown("")
 
-    with c1:
-        if numeric_cols:
-            hist_col = st.selectbox(
-                "Distribuicao",
-                options=numeric_cols,
-                help="Inspecione assimetria, caudas e concentracao da variavel numerica.",
+    # ── Agregacao por categoria ────────────────────────────────────────────────
+    if grp_cats and an_nums:
+        st.markdown("#### Agregacao por categoria")
+        a1, a2, a3 = st.columns(3)
+        agg_cat = a1.selectbox("Agrupar por", options=grp_cats, key="bi_agg_cat")
+        agg_num = a2.selectbox("Metrica", options=an_nums, key="bi_agg_num")
+        agg_fn_label = a3.selectbox(
+            "Funcao",
+            options=["Media", "Soma", "Contagem", "Mediana", "Maximo", "Minimo"],
+            key="bi_agg_fn",
+        )
+        agg_fn_map = {
+            "Media": "mean", "Soma": "sum", "Contagem": "count",
+            "Mediana": "median", "Maximo": "max", "Minimo": "min",
+        }
+        agg_result = (
+            df.groupby(agg_cat, dropna=True)[agg_num]
+            .agg(agg_fn_map[agg_fn_label])
+            .reset_index()
+            .sort_values(agg_num, ascending=True)
+        )
+        agg_result.columns = [agg_cat, "valor"]
+        fig_agg = px.bar(
+            agg_result,
+            x="valor",
+            y=agg_cat,
+            orientation="h",
+            title=f"{agg_fn_label} de {agg_num} por {agg_cat}",
+            color="valor",
+            color_continuous_scale="Blues",
+            labels={"valor": f"{agg_fn_label} ({agg_num})", agg_cat: ""},
+            text=agg_result["valor"].apply(_fmt_number),
+        )
+        fig_agg.update_traces(textposition="outside")
+        fig_agg.update_layout(
+            template="plotly_white",
+            margin=dict(l=10, r=60, t=50, b=10),
+            coloraxis_showscale=False,
+        )
+        st.plotly_chart(fig_agg, width="stretch")
+
+    # ── Distribuicao + Estatisticas descritivas ───────────────────────────────
+    if all_nums:
+        st.markdown("#### Distribuicao e estatisticas")
+        d1, d2 = st.columns([3, 2])
+        with d1:
+            dist_col = st.selectbox("Coluna", options=all_nums, key="bi_dist")
+            fig_hist = px.histogram(
+                df,
+                x=dist_col,
+                nbins=30,
+                marginal="box",
+                title=f"Distribuicao: {dist_col}",
+                color_discrete_sequence=["#155eef"],
             )
-            fig_hist = px.histogram(df, x=hist_col, nbins=35, title=f"Distribuicao: {hist_col}")
-            fig_hist.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
+            fig_hist.update_layout(
+                template="plotly_white",
+                margin=dict(l=10, r=10, t=50, b=10),
+                showlegend=False,
+            )
             st.plotly_chart(fig_hist, width="stretch")
-        else:
-            st.info("Sem coluna numerica para grafico de distribuicao.")
 
-    with c2:
-        if categorical_cols:
-            cat_col = st.selectbox(
-                "Frequencia por categoria",
-                options=categorical_cols,
-                help="Principais categorias para checagem de cardinalidade e desbalanceamento.",
+        with d2:
+            s = df[dist_col].dropna()
+            desc = {
+                "Contagem": f"{len(s):,}",
+                "Minimo": _fmt_number(float(s.min())),
+                "Q1 (25%)": _fmt_number(float(s.quantile(0.25))),
+                "Mediana": _fmt_number(float(s.median())),
+                "Media": _fmt_number(float(s.mean())),
+                "Q3 (75%)": _fmt_number(float(s.quantile(0.75))),
+                "Maximo": _fmt_number(float(s.max())),
+                "Desvio padrao": _fmt_number(float(s.std())),
+                "Assimetria": f"{float(s.skew()):.3f}",
+                "Curtose": f"{float(s.kurt()):.3f}",
+            }
+            desc_df = pd.DataFrame(
+                {"Estatistica": list(desc.keys()), "Valor": list(desc.values())}
             )
-            counts = df[cat_col].astype("string").fillna("<NA>").value_counts().head(12)
-            fig_bar = px.bar(
-                x=counts.index,
-                y=counts.values,
-                labels={"x": cat_col, "y": "contagem"},
-                title=f"Top categorias: {cat_col}",
-            )
-            fig_bar.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
-            st.plotly_chart(fig_bar, width="stretch")
-        else:
-            st.info("Sem coluna categorica para grafico de frequencia.")
+            st.markdown(f"**Estatisticas: {dist_col}**")
+            st.dataframe(desc_df, hide_index=True, width="stretch")
 
-    if len(numeric_cols) >= 2:
+    # ── Serie temporal ────────────────────────────────────────────────────────
+    if date_cols and all_nums:
+        st.markdown("#### Serie temporal")
+        t1, t2, t3 = st.columns(3)
+        date_col = t1.selectbox("Coluna de data", options=date_cols, key="bi_date")
+        ts_num = t2.selectbox("Metrica", options=all_nums, key="bi_ts_num")
+        ts_agg_label = t3.selectbox(
+            "Agregacao",
+            options=["Media", "Soma", "Contagem"],
+            key="bi_ts_agg",
+        )
+        ts_agg_map = {"Media": "mean", "Soma": "sum", "Contagem": "count"}
+
+        try:
+            ts_df = df[[date_col, ts_num]].copy()
+            ts_df[date_col] = pd.to_datetime(ts_df[date_col], errors="coerce", format="mixed")
+            ts_df = ts_df.dropna(subset=[date_col])
+            date_range = (ts_df[date_col].max() - ts_df[date_col].min()).days
+            freq = "ME" if date_range > 60 else ("W" if date_range > 14 else "D")
+            ts_agg = (
+                ts_df.set_index(date_col)[ts_num]
+                .resample(freq)
+                .agg(ts_agg_map[ts_agg_label])
+                .reset_index()
+            )
+            fig_ts = px.line(
+                ts_agg,
+                x=date_col,
+                y=ts_num,
+                title=f"{ts_agg_label} de {ts_num} ao longo do tempo",
+                markers=True,
+                color_discrete_sequence=["#155eef"],
+            )
+            fig_ts.update_layout(
+                template="plotly_white",
+                margin=dict(l=10, r=10, t=50, b=10),
+            )
+            st.plotly_chart(fig_ts, width="stretch")
+        except Exception:
+            st.info("Nao foi possivel renderizar a serie temporal com a coluna selecionada.")
+
+    # ── Dispersao + Correlacao ────────────────────────────────────────────────
+    if len(all_nums) >= 2:
+        st.markdown("#### Relacoes entre variaveis")
         s1, s2, s3 = st.columns(3)
-        x_col = s1.selectbox("Dispersao X", options=numeric_cols)
-        y_col = s2.selectbox("Dispersao Y", options=numeric_cols, index=1)
-        color_col = s3.selectbox("Colorir por", options=["(nenhum)"] + categorical_cols)
-
+        x_col = s1.selectbox("Eixo X", options=all_nums, key="bi_sx")
+        y_col = s2.selectbox(
+            "Eixo Y",
+            options=all_nums,
+            index=min(1, len(all_nums) - 1),
+            key="bi_sy",
+        )
+        color_col = s3.selectbox(
+            "Colorir por",
+            options=["(nenhum)"] + grp_cats,
+            key="bi_sc",
+        )
         fig_scatter = px.scatter(
             df,
             x=x_col,
             y=y_col,
             color=None if color_col == "(nenhum)" else color_col,
-            title=f"Relacao: {x_col} vs {y_col}",
-            opacity=0.72,
+            title=f"Dispersao: {x_col} vs {y_col}",
+            opacity=0.75,
         )
-        fig_scatter.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
+        fig_scatter.update_layout(
+            template="plotly_white",
+            margin=dict(l=10, r=10, t=50, b=10),
+        )
         st.plotly_chart(fig_scatter, width="stretch")
 
-        corr_data = df[numeric_cols].corr(numeric_only=True)
+        corr_data = df[an_nums if len(an_nums) >= 2 else all_nums].corr(numeric_only=True)
         if not corr_data.empty and corr_data.shape[0] >= 2:
-            heatmap = go.Figure(
+            text_vals = [[f"{v:.2f}" for v in row] for row in corr_data.values]
+            fig_corr = go.Figure(
                 data=go.Heatmap(
                     z=corr_data.values,
-                    x=corr_data.columns,
-                    y=corr_data.index,
+                    x=corr_data.columns.tolist(),
+                    y=corr_data.index.tolist(),
                     zmid=0,
                     colorscale="RdBu",
+                    text=text_vals,
+                    texttemplate="%{text}",
+                    textfont={"size": 11},
                 )
             )
-            heatmap.update_layout(title="Matriz de correlacao", template="plotly_white")
-            st.plotly_chart(heatmap, width="stretch")
-        else:
-            st.info("Sao necessarias pelo menos 2 colunas numericas com dados validos para a matriz de correlacao.")
+            fig_corr.update_layout(
+                title="Matriz de correlacao",
+                template="plotly_white",
+                margin=dict(l=10, r=10, t=50, b=10),
+                height=max(350, corr_data.shape[0] * 55),
+            )
+            st.plotly_chart(fig_corr, width="stretch")
 
-        box_col = st.selectbox("Checagem de outlier (boxplot)", options=numeric_cols)
-        fig_box = px.box(df, y=box_col, points="outliers", title=f"Perfil de outlier: {box_col}")
-        fig_box.update_layout(template="plotly_white")
-        st.plotly_chart(fig_box, width="stretch")
-    elif numeric_cols:
-        st.info("Sao necessarias pelo menos 2 colunas numericas para o grafico de dispersao e matriz de correlacao.")
+    # ── Top / Bottom N ────────────────────────────────────────────────────────
+    if an_nums:
+        st.markdown("#### Ranking — Top / Bottom")
+        r1, r2, r3 = st.columns(3)
+        rank_col = r1.selectbox("Ordenar por", options=an_nums, key="bi_rank_col")
+        rank_n = r2.slider("Quantidade", min_value=3, max_value=min(20, len(df)), value=5, key="bi_rank_n")
+        rank_order = r3.radio("Ordem", options=["Maiores", "Menores"], horizontal=True, key="bi_rank_ord")
+
+        ascending = rank_order == "Menores"
+        ranked = df.sort_values(rank_col, ascending=ascending).head(rank_n)
+        display_cols = (
+            [rank_col]
+            + [c for c in grp_cats[:3] if c in df.columns]
+            + [c for c in an_nums[:3] if c != rank_col and c in df.columns]
+        )
+        display_cols = list(dict.fromkeys(display_cols))
+        st.dataframe(ranked[display_cols].reset_index(drop=True), width="stretch")
+
+
+def render_drift_section(df_main: pd.DataFrame, df_ref: pd.DataFrame) -> None:
+    from src.data.drift import analyze_drift
+
+    st.markdown("### Analise de Drift")
+    st.caption(
+        "Compara distribuicoes do dataset ativo com o dataset de referencia. "
+        "KS test (p < 0.05) para numericas; PSI para categoricas (>= 0.1 moderado, >= 0.2 significativo)."
+    )
+
+    with st.spinner("Calculando drift..."):
+        drift = analyze_drift(df_ref, df_main)
+
+    summary = drift["summary"]
+    schema = drift["schema_diff"]
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Linhas — referencia", f"{summary['linhas_ref']:,}")
+    c2.metric("Linhas — atual", f"{summary['linhas_atual']:,}")
+    c3.metric("Drift numerico", summary["colunas_com_drift_numerico"])
+    c4.metric("Drift categorico", summary["colunas_com_drift_categorico"])
+
+    if schema["colunas_adicionadas"] or schema["colunas_removidas"]:
+        with st.expander("Mudancas de schema", expanded=True):
+            if schema["colunas_adicionadas"]:
+                st.success("Adicionadas: " + ", ".join(schema["colunas_adicionadas"]))
+            if schema["colunas_removidas"]:
+                st.error("Removidas: " + ", ".join(schema["colunas_removidas"]))
+    else:
+        st.success(f"Schemas identicos — {schema['colunas_em_comum']} colunas em comum.")
+
+    # ── Drift numerico ────────────────────────────────────────────────────────
+    st.markdown("#### Drift numerico")
+    nd = drift["numeric_drift"]
+    if nd.empty:
+        st.info("Nenhuma coluna numerica em comum para comparar.")
+    else:
+        if not summary["scipy_disponivel"]:
+            st.warning(
+                "scipy nao instalado — deteccao simplificada por delta de media. "
+                "`pip install scipy` para o KS test completo."
+            )
+        drifted_num = nd[nd["drift_detectado"]].sort_values(
+            "ks_estatistica", ascending=False, na_position="last"
+        )
+        stable_num = nd[~nd["drift_detectado"]]
+
+        if not drifted_num.empty:
+            st.error(f"{len(drifted_num)} coluna(s) com drift detectado:")
+            st.dataframe(drifted_num, width="stretch")
+
+            top_col = str(drifted_num.iloc[0]["coluna"])
+            if top_col in df_ref.columns and top_col in df_main.columns:
+                combined = pd.concat(
+                    [
+                        df_ref[[top_col]].assign(fonte="Referencia"),
+                        df_main[[top_col]].assign(fonte="Atual"),
+                    ],
+                    ignore_index=True,
+                )
+                fig = px.histogram(
+                    combined,
+                    x=top_col,
+                    color="fonte",
+                    barmode="overlay",
+                    opacity=0.7,
+                    title=f"Distribuicao comparada: {top_col}",
+                    color_discrete_map={"Referencia": "#155eef", "Atual": "#ef4444"},
+                )
+                fig.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
+                st.plotly_chart(fig, width="stretch")
+        else:
+            st.success("Nenhuma coluna numerica com drift detectado.")
+
+        if not stable_num.empty:
+            with st.expander(f"{len(stable_num)} coluna(s) estaveis"):
+                st.dataframe(stable_num, width="stretch")
+
+    # ── Drift categorico ──────────────────────────────────────────────────────
+    st.markdown("#### Drift categorico (PSI)")
+    cd = drift["categorical_drift"]
+    if cd.empty:
+        st.info("Nenhuma coluna categorica em comum com cardinalidade adequada (2–50 valores).")
+    else:
+        drifted_cat = cd[cd["drift_detectado"]].sort_values("psi", ascending=False)
+        stable_cat = cd[~cd["drift_detectado"]]
+
+        if not drifted_cat.empty:
+            st.error(f"{len(drifted_cat)} coluna(s) com drift categorico:")
+            st.dataframe(drifted_cat, width="stretch")
+
+            top_cat = str(drifted_cat.iloc[0]["coluna"])
+            if top_cat in df_ref.columns and top_cat in df_main.columns:
+                freq_r = (
+                    df_ref[top_cat].astype(str)
+                    .value_counts(normalize=True)
+                    .head(12)
+                    .reset_index()
+                    .rename(columns={top_cat: "categoria", "proportion": "frequencia",
+                                     "count": "frequencia"})
+                )
+                freq_r.columns = ["categoria", "frequencia"]
+                freq_r["fonte"] = "Referencia"
+
+                freq_n = (
+                    df_main[top_cat].astype(str)
+                    .value_counts(normalize=True)
+                    .head(12)
+                    .reset_index()
+                    .rename(columns={top_cat: "categoria", "proportion": "frequencia",
+                                     "count": "frequencia"})
+                )
+                freq_n.columns = ["categoria", "frequencia"]
+                freq_n["fonte"] = "Atual"
+
+                combined_cat = pd.concat([freq_r, freq_n], ignore_index=True)
+                fig_cat = px.bar(
+                    combined_cat,
+                    x="categoria",
+                    y="frequencia",
+                    color="fonte",
+                    barmode="group",
+                    title=f"Distribuicao categorica: {top_cat}",
+                    color_discrete_map={"Referencia": "#155eef", "Atual": "#ef4444"},
+                )
+                fig_cat.update_layout(template="plotly_white", margin=dict(l=10, r=10, t=50, b=10))
+                st.plotly_chart(fig_cat, width="stretch")
+        else:
+            st.success("Nenhuma coluna categorica com drift significativo (PSI < 0.1).")
+
+        if not stable_cat.empty:
+            with st.expander(f"{len(stable_cat)} coluna(s) estaveis"):
+                st.dataframe(stable_cat, width="stretch")
 
 
 def render_cleaning_section(

@@ -13,8 +13,11 @@ MISSING_TOKENS = {"", " ", "na", "n/a", "null", "none", "nan", "-"}
 _PATTERNS: dict[str, re.Pattern[str]] = {
     "email":    re.compile(r"^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$", re.I),
     "cpf":      re.compile(r"^\d{3}[\.\-]?\d{3}[\.\-]?\d{3}[\-]?\d{2}$"),
+    "cnpj":     re.compile(r"^\d{2}[\.\-]?\d{3}[\.\-]?\d{3}[\/]?\d{4}[\-]?\d{2}$"),
     "cep":      re.compile(r"^\d{5}[\-]?\d{3}$"),
     "telefone": re.compile(r"^(\+?55\s?)?(\(?\d{2}\)?[\s\-]?)(\d{4,5}[\-\s]?\d{4})$"),
+    "placa":    re.compile(r"^[A-Z]{3}[\-]?(\d{4}|\d[A-Z]\d{2})$", re.I),
+    "data_br":  re.compile(r"^\d{1,2}/\d{1,2}/\d{4}$"),
     "url":      re.compile(r"^https?://[^\s]+$", re.I),
 }
 
@@ -65,6 +68,50 @@ def _detect_patterns(df: pd.DataFrame, rows: int) -> pd.DataFrame:
     return pd.DataFrame(result_rows)
 
 
+def _detect_functional_dependencies(df: pd.DataFrame, max_pairs: int = 200) -> pd.DataFrame:
+    """
+    Detecta dependencias funcionais A -> B entre pares de colunas.
+    A determina B funcionalmente quando cada valor de A mapeia para exatamente um valor de B.
+    Util para identificar colunas redundantes (ex: cidade -> estado).
+    """
+    n_rows = max(len(df), 1)
+
+    # Amostrar para performance em datasets grandes
+    sample = df.sample(min(n_rows, 50_000), random_state=42) if n_rows > 50_000 else df
+
+    # Candidatos a determinante: cardinalidade entre 2 e 50% das linhas
+    candidate_cols = [
+        col for col in df.columns
+        if 2 <= int(df[col].nunique(dropna=True)) <= max(n_rows * 0.5, 2)
+    ]
+
+    result_rows: list[dict[str, Any]] = []
+    pairs_checked = 0
+
+    for col_a in candidate_cols:
+        if pairs_checked >= max_pairs:
+            break
+        for col_b in df.columns:
+            if col_a == col_b:
+                continue
+            if pairs_checked >= max_pairs:
+                break
+            pairs_checked += 1
+
+            grouped = sample.groupby(col_a, dropna=True)[col_b].nunique()
+            # Precisa de pelo menos 2 grupos para ser informativo
+            if len(grouped) < 2:
+                continue
+            if int(grouped.max()) == 1:
+                result_rows.append({
+                    "coluna_determinante": col_a,
+                    "coluna_dependente": col_b,
+                    "grupos_verificados": int(len(grouped)),
+                })
+
+    return pd.DataFrame(result_rows)
+
+
 def _outliers_zscore(series: pd.Series, threshold: float = 3.0) -> int:
     """Conta outliers pelo metodo Z-score (|z| > threshold)."""
     if series.empty or series.std() == 0:
@@ -97,6 +144,7 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
             "constant_columns": [],
             "cardinality_table": pd.DataFrame(),
             "fuzzy_table": pd.DataFrame(),
+            "functional_deps": pd.DataFrame(),
         }
 
     rows, cols = df.shape
@@ -276,6 +324,9 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
                         })
     fuzzy_table = pd.DataFrame(fuzzy_rows)
 
+    # Dependencias funcionais entre colunas
+    functional_deps = _detect_functional_dependencies(df)
+
     summary = {
         "rows": rows,
         "columns": cols,
@@ -298,4 +349,5 @@ def analyze_dataset(df: pd.DataFrame) -> dict[str, Any]:
         "constant_columns": constant_columns,
         "cardinality_table": cardinality_table,
         "fuzzy_table": fuzzy_table,
+        "functional_deps": functional_deps,
     }
