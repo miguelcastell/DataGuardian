@@ -13,7 +13,7 @@ from app.dashboard_app.sections import (
     render_quality_issues,
     render_visual_insights,
 )
-from app.dashboard_app.styles import apply_design_system, render_hero, render_stepper
+from app.dashboard_app.styles import apply_design_system, get_asset_data_uri, render_hero, render_stepper
 from src.data.quality import analyze_dataset
 
 
@@ -27,11 +27,19 @@ def run_dashboard() -> None:
 
     apply_design_system()
 
+    sidebar_logo = get_asset_data_uri("logo-horizontal.png")
+
     if "main_section" not in st.session_state:
         st.session_state["main_section"] = "Painel"
 
     with st.sidebar:
-        st.markdown("<div class='dg-sidebar-brand'>DataGuardian</div>", unsafe_allow_html=True)
+        if sidebar_logo:
+            st.markdown(
+                f"<div class='dg-sidebar-brand'><img class='dg-sidebar-logo' src='{sidebar_logo}' alt='Data Guardian' /></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown("<div class='dg-sidebar-brand'>DataGuardian</div>", unsafe_allow_html=True)
         st.markdown("### Upload de dataset")
         uploaded_files = st.file_uploader(
             "Adicione um ou mais arquivos CSV",

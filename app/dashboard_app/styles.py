@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import streamlit as st
 
 # Paleta semantica por nivel de qualidade
@@ -123,6 +126,22 @@ def apply_design_system() -> None:
             align-items: center;
             gap: 14px;
             margin-bottom: 14px;
+          }
+          .dg-hero-logo {
+            width: 58px;
+            height: 58px;
+            border-radius: 16px;
+            background: rgba(255,255,255,.12);
+            border: 1px solid rgba(255,255,255,.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+          }
+          .dg-hero-logo img {
+            width: 44px;
+            height: auto;
+            display: block;
           }
           .dg-logo-pill {
             background: rgba(255,255,255,.15);
@@ -337,6 +356,12 @@ def apply_design_system() -> None:
             color: #0f172a !important;
             margin: 4px 0 14px;
           }
+          .dg-sidebar-logo {
+            display: block;
+            width: 100%;
+            max-width: 180px;
+            height: auto;
+          }
 
           /* ── File uploader ── */
           /* Container externo: sem borda propria (a area dashed ja tem a borda) */
@@ -490,6 +515,17 @@ def apply_design_system() -> None:
     )
 
 
+_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+
+
+def get_asset_data_uri(filename: str) -> str:
+    file_path = _ASSETS_DIR / filename
+    if not file_path.exists():
+        return ""
+    encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def render_hero(
     dataset_name: str | None = None,
     quality_score: float | None = None,
@@ -499,6 +535,7 @@ def render_hero(
 ) -> None:
     """Hero section com gradiente, identidade DG e status do dataset ativo."""
     palette = QUALITY_PALETTE.get(quality_level or "", QUALITY_PALETTE["Bom"])
+    logo_vertical = get_asset_data_uri("logo.png")
 
     status_html = ""
     if dataset_name:
@@ -540,7 +577,9 @@ def render_hero(
         f"""
         <div class="dg-hero">
           <div class="dg-hero-top">
-            <span class="dg-logo-pill">DG</span>
+            <div class="dg-hero-logo">
+              <img src="{logo_vertical}" alt="Data Guardian" />
+            </div>
             <div>
               <h1 class="dg-hero-title">Data Guardian</h1>
               <p class="dg-hero-subtitle">Plataforma de diagnostico e tratamento de qualidade de dados.</p>
