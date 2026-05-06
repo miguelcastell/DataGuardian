@@ -282,12 +282,17 @@ def render_alerts(analysis: dict, quality_score: float) -> None:
 
 def _fmt_number(val: float) -> str:
     """Formata um numero para exibicao em KPI card (K / M para grandes valores)."""
+    if val != val:  # NaN
+        return "—"
     if abs(val) >= 1_000_000:
         return f"{val / 1_000_000:.2f}M"
     if abs(val) >= 1_000:
         return f"{val / 1_000:.1f}K"
-    if val == int(val):
-        return f"{int(val):,}"
+    try:
+        if val == int(val):
+            return f"{int(val):,}"
+    except (OverflowError, ValueError):
+        pass
     return f"{val:,.2f}"
 
 
@@ -315,11 +320,12 @@ def _grouping_cats(df: pd.DataFrame) -> list[str]:
 
 def _detect_date_cols(df: pd.DataFrame, analysis: dict | None) -> list[str]:
     """Detecta colunas de data por sugestao de tipo ou por nome heuristico."""
+    df_cols = set(df.columns)
     found: list[str] = []
     if analysis:
         ts = analysis.get("type_suggestions", pd.DataFrame())
         if not ts.empty:
-            found = ts.loc[ts["suggested_type"] == "datetime", "column"].tolist()
+            found = [c for c in ts.loc[ts["suggested_type"] == "datetime", "column"].tolist() if c in df_cols]
     keywords = {"data", "date", "dt", "mes", "ano", "year", "month", "dia", "day", "periodo", "cadastro"}
     for col in df.columns:
         if col in found:
@@ -732,7 +738,9 @@ def render_cleaning_section(
             rec_df, _ = clean_dataset(df_original, **rec_options)
             st.session_state["cleaned_df"] = rec_df
             st.session_state["show_bi"] = True
-            st.success("Recomendacoes aplicadas. Veja o resultado em Insights BI.")
+            st.session_state["main_section"] = "Insights BI"
+            st.session_state["_nav_request"] = "Insights BI"
+            st.rerun()
         st.markdown("---")
 
     c1, c2, c3 = st.columns(3)
@@ -893,6 +901,9 @@ def render_cleaning_section(
             st.session_state["cleaned_df"] = cleaned_preview
             st.session_state["cleaning_report"] = report_preview
             st.session_state["show_bi"] = True
+            st.session_state["main_section"] = "Insights BI"
+            st.session_state["_nav_request"] = "Insights BI"
+            st.rerun()
 
     with st.expander("Relatorio tecnico"):
         st.json(report_preview)

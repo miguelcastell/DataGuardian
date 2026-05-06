@@ -143,6 +143,14 @@ def run_dashboard() -> None:
     )
 
     extra_sections = ["Drift"] if drift_ref_df is not None else []
+
+    if "_nav_request" in st.session_state:
+        nav_target = st.session_state.pop("_nav_request")
+        st.session_state["nav_stepper"] = nav_target
+        st.session_state["main_section"] = nav_target
+        for _k in [k for k in st.session_state if k.startswith("bi_")]:
+            del st.session_state[_k]
+
     section = render_stepper(
         st.session_state.get("main_section", "Painel"),
         extra_sections=extra_sections,

@@ -609,6 +609,7 @@ def render_stepper(active: str, extra_sections: list[str] | None = None) -> str:
         "Navegacao principal",
         options=options,
         default=selected,
+        key="nav_stepper",
         format_func=lambda x: labels[x],
         selection_mode="single",
         width="stretch",
