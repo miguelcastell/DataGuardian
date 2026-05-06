@@ -351,9 +351,15 @@ def apply_design_system() -> None:
           }
 
           /* ── Sidebar ── */
-          .stSidebar { background: #f8fafc; border-right: 1px solid var(--border); }
-          [data-testid="stSidebar"],
-          [data-testid="stSidebar"] * { color: var(--text) !important; background-color: transparent; }
+          .stSidebar,
+          [data-testid="stSidebar"] {
+            background: #f8fafc !important;
+            border-right: 1px solid var(--border);
+          }
+          [data-testid="stSidebar"] > div:first-child {
+            background: #f8fafc !important;
+          }
+          [data-testid="stSidebar"] * { color: var(--text) !important; }
           .dg-sidebar-brand {
             font-size: 1.08rem;
             font-weight: 800;
@@ -514,6 +520,217 @@ def apply_design_system() -> None:
           /* ── Misc ── */
           .stAlert { border-radius: 12px; border: 1px solid var(--border); }
           [data-testid="stDataFrame"] { border: 1px solid var(--border); border-radius: 10px; }
+
+          /* ═══════════════════════════════════════════════════════
+             MOBILE RESPONSIVE
+             ═══════════════════════════════════════════════════════ */
+
+          @media (max-width: 768px) {
+
+            /* ── Container ── */
+            .block-container,
+            [data-testid="stMainBlockContainer"] {
+              padding-left: 12px !important;
+              padding-right: 12px !important;
+              padding-top: 0.25rem !important;
+              padding-bottom: 1.5rem !important;
+              max-width: 100vw !important;
+            }
+
+            /* ── Hero ── */
+            .dg-hero {
+              padding: 28px 20px 22px !important;
+              border-radius: 14px !important;
+              margin-bottom: 14px !important;
+              overflow: hidden !important;
+            }
+            .dg-hero::before,
+            .dg-hero::after { display: none !important; }
+            .dg-hero-top {
+              min-height: 56px !important;
+              margin-bottom: 8px !important;
+              padding-left: 0 !important;
+              align-items: flex-start !important;
+            }
+            .dg-hero-title {
+              font-size: 1.6rem !important;
+              line-height: 1.2 !important;
+            }
+            .dg-hero-subtitle {
+              font-size: 0.88rem !important;
+              margin-top: 4px !important;
+            }
+            .dg-hero-status {
+              display: flex !important;
+              flex-wrap: wrap !important;
+              gap: 14px 24px !important;
+              margin-top: 16px !important;
+            }
+            .dg-hero-stat {
+              min-width: 0 !important;
+              flex: 0 0 auto !important;
+            }
+            .dg-hero-stat-value {
+              font-size: 1rem !important;
+              white-space: nowrap !important;
+              overflow: hidden !important;
+              text-overflow: ellipsis !important;
+              max-width: 160px !important;
+            }
+            .dg-hero-stat-label { font-size: 0.65rem !important; }
+            .dg-hero-badge { font-size: 0.72rem !important; padding: 3px 10px !important; }
+
+            /* ── Stack todas as colunas Streamlit ── */
+            [data-testid="stHorizontalBlock"] {
+              flex-direction: column !important;
+              gap: 10px !important;
+            }
+            [data-testid="column"],
+            [data-testid="stColumn"] {
+              width: 100% !important;
+              flex: 1 1 100% !important;
+              min-width: 100% !important;
+            }
+
+            /* ── Metric cards ── */
+            .dg-card { padding: 12px 14px 10px !important; }
+            .dg-card-value { font-size: 1.15rem !important; }
+            .dg-card-label { font-size: 0.62rem !important; }
+
+            /* ── Botoes — full-width e touch-friendly ── */
+            .stButton > button,
+            [data-testid="stDownloadButton"] > button,
+            [data-testid="stBaseButton-primary"],
+            [data-testid="stBaseButton-secondary"] {
+              width: 100% !important;
+              min-height: 48px !important;
+              font-size: 0.9rem !important;
+              border-radius: 12px !important;
+              -webkit-tap-highlight-color: transparent !important;
+            }
+
+            /* ── Tabs ── */
+            .stTabs [data-baseweb="tab-list"] {
+              overflow-x: auto !important;
+              -webkit-overflow-scrolling: touch !important;
+              flex-wrap: nowrap !important;
+              gap: 4px !important;
+              padding-bottom: 4px !important;
+              scrollbar-width: none !important;
+            }
+            .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar { display: none; }
+            .stTabs [data-baseweb="tab"] {
+              padding: 0 10px !important;
+              font-size: 0.78rem !important;
+              height: 36px !important;
+              white-space: nowrap !important;
+              flex-shrink: 0 !important;
+            }
+            .stTabs [data-baseweb="tab-panel"] {
+              padding: 12px 8px !important;
+            }
+
+            /* ── Segmented control (stepper) — scrollavel ── */
+            [data-testid="stSegmentedControl"] {
+              overflow-x: auto !important;
+              -webkit-overflow-scrolling: touch !important;
+              padding-bottom: 2px !important;
+              scrollbar-width: none !important;
+            }
+            [data-testid="stSegmentedControl"]::-webkit-scrollbar { display: none; }
+            [data-testid="stSegmentedControl"] > div {
+              min-width: max-content !important;
+            }
+            [data-testid="stSegmentedControl"] button {
+              font-size: 0.8rem !important;
+              padding: 6px 12px !important;
+              min-height: 38px !important;
+              white-space: nowrap !important;
+            }
+
+            /* ── DataFrames — scroll horizontal ── */
+            [data-testid="stDataFrame"],
+            [data-testid="stDataFrame"] > div {
+              overflow-x: auto !important;
+              max-width: 100% !important;
+            }
+
+            /* ── Selects e inputs — evita zoom no iOS ── */
+            [data-baseweb="select"] > div,
+            [data-testid="stNumberInput"] input,
+            [data-testid="stTextInput"] input,
+            [data-testid="stTextArea"] textarea {
+              min-height: 44px !important;
+              font-size: 16px !important;
+            }
+
+            /* ── Sidebar ── */
+            [data-testid="stSidebar"] {
+              max-width: 88vw !important;
+            }
+            .dg-sidebar-logo { max-width: 150px !important; }
+
+            /* ── Plotly ── */
+            .js-plotly-plot,
+            .plotly.html-widget {
+              max-width: 100% !important;
+              overflow: hidden !important;
+            }
+
+            /* ── Metricas Streamlit ── */
+            [data-testid="stMetricValue"] { font-size: 1.2rem !important; }
+            [data-testid="stMetricLabel"] { font-size: 0.72rem !important; }
+            [data-testid="stMetricDelta"] { font-size: 0.72rem !important; }
+
+            /* ── Alertas ── */
+            .stAlert { font-size: 0.85rem !important; padding: 10px 12px !important; }
+
+            /* ── Expanders ── */
+            .stExpander details summary { font-size: 0.85rem !important; }
+
+            /* ── Tipografia ── */
+            h3 { font-size: 1.05rem !important; }
+            h4 { font-size: 0.95rem !important; }
+
+            /* ── Badges ── */
+            .dg-badge { font-size: 0.68rem !important; padding: 3px 8px !important; }
+
+            /* ── Slider ── */
+            [data-testid="stSlider"] { padding-left: 4px !important; padding-right: 4px !important; }
+
+            /* ── Toggle ── */
+            [data-testid="stToggle"] { -webkit-tap-highlight-color: transparent !important; }
+
+            /* ── Radio ── */
+            [data-testid="stRadio"] label { font-size: 0.85rem !important; }
+
+            /* ── Spinner ── */
+            [data-testid="stSpinner"] { font-size: 0.85rem !important; }
+
+            /* ── Upload area ── */
+            [data-testid="stFileUploaderDropzone"] {
+              padding: 16px 12px !important;
+            }
+          }
+
+          /* ── Telas muito pequenas (< 480 px) ── */
+          @media (max-width: 480px) {
+            .block-container,
+            [data-testid="stMainBlockContainer"] {
+              padding-left: 8px !important;
+              padding-right: 8px !important;
+            }
+            .dg-hero { padding: 22px 16px 18px !important; }
+            .dg-hero-title { font-size: 1.35rem !important; }
+            .dg-hero-subtitle { font-size: 0.82rem !important; }
+            .dg-hero-status { gap: 10px 18px !important; }
+            .dg-hero-stat-value { font-size: 0.9rem !important; max-width: 130px !important; }
+            .stTabs [data-baseweb="tab"] {
+              font-size: 0.72rem !important;
+              padding: 0 8px !important;
+            }
+            .dg-card-value { font-size: 1rem !important; }
+          }
         </style>
         """,
         unsafe_allow_html=True,
@@ -580,7 +797,7 @@ def render_hero(
         f"""
         <div class="dg-hero">
           <div class="dg-hero-top">
-            <div>
+            <div style="flex:1;min-width:0;">
               <h1 class="dg-hero-title">Data Guardian</h1>
               <p class="dg-hero-subtitle">Plataforma de diagnostico e tratamento de qualidade de dados.</p>
             </div>

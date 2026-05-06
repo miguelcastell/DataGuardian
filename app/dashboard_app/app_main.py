@@ -22,7 +22,7 @@ def run_dashboard() -> None:
         page_title="Data Guardian",
         page_icon="assets/logo.png",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="auto",
     )
 
     apply_design_system()
